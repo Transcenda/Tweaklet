@@ -76,16 +76,23 @@ The script self-bootstraps: it mounts the Tweaklet UI into a Shadow root directl
 
 **Reverse-proxy requirement:** The URI is relative (`/tweaklet/widget.js`). Your reverse proxy must forward `/tweaklet/*` to the Tweaklet server (configured in the previous section) so the widget, panel, and agent API all share the same origin as your app.
 
-**Per-environment gating (dev on / prod off):** For frameworks with build-time env vars, gate the load so it only runs in development. Vite example — replace the static tag with:
+**Per-environment gating (dev on / prod off):** Gate the load so it only runs in development. Vite example — replace the static tag with a snippet that defaults to `/tweaklet` in dev and loads nothing in a production build (no `.env` file needed):
 
 ```html
 <script type="module">
-  const url = import.meta.env.VITE_TWEAKLET_URL; // set in .env.development, unset in .env.production
-  if (url) { const s = document.createElement("script"); s.src = url + "/widget.js"; s.async = true; document.head.appendChild(s); }
+  // Dev: load same-origin from /tweaklet. Production build: off.
+  const url = import.meta.env.VITE_TWEAKLET_URL || (import.meta.env.DEV ? "/tweaklet" : "");
+  if (url) { const s = document.createElement("script"); s.src = url + "/widget.js"; s.async = true; document.body.appendChild(s); }
 </script>
 ```
 
-For Next.js gate on `process.env.NEXT_PUBLIC_TWEAKLET_URL`. For static / server-rendered apps without env vars, either add a server-side environment check or leave the tag unconditional — the browser silently ignores a 404 when the Tweaklet server is not running in production.
+For `/tweaklet` to be same-origin in local dev, add a dev-server proxy. In `vite.config.ts`, under `server.proxy`:
+
+```ts
+"/tweaklet": "http://127.0.0.1:4319",
+```
+
+`VITE_TWEAKLET_URL` is optional — set it only to override the base path or to force the widget into a production-mode build (e.g. a staging or dev image). For Next.js gate on `process.env.NEXT_PUBLIC_TWEAKLET_URL`. For static / server-rendered apps without env vars, either add a server-side environment check or leave the tag unconditional — the browser silently ignores a 404 when the Tweaklet server is not running in production.
 
 **Claude Code users:** run the `install-tweaklet-widget` skill (`/install-tweaklet-widget`) to have Claude find your entry document, insert the snippet, and apply the appropriate per-environment gating automatically.
 

@@ -115,16 +115,17 @@ Add one `<script>` tag to your app's global entry document — the same way you'
 
 The widget derives its server base from its own `src` at runtime (no build-time config). Your reverse proxy must forward `/tweaklet/*` to the Tweaklet server so the widget shares the same origin as your app.
 
-**Dev-only gating (recommended):** Use an env-var guard so the widget loads in development but not production. Vite example:
+**Dev-only gating (recommended):** Load the widget in development but not production. The Vite snippet below defaults to `/tweaklet` in dev and loads nothing in a production build — no `.env` file needed:
 
 ```html
 <script type="module">
-  const url = import.meta.env.VITE_TWEAKLET_URL; // set in .env.development, absent in .env.production
-  if (url) { const s = document.createElement("script"); s.src = url + "/widget.js"; s.async = true; document.head.appendChild(s); }
+  // Dev: load same-origin from /tweaklet. Production build: off.
+  const url = import.meta.env.VITE_TWEAKLET_URL || (import.meta.env.DEV ? "/tweaklet" : "");
+  if (url) { const s = document.createElement("script"); s.src = url + "/widget.js"; s.async = true; document.body.appendChild(s); }
 </script>
 ```
 
-For Next.js gate on `process.env.NEXT_PUBLIC_TWEAKLET_URL`. Full framework-by-framework details are in **[docs/INSTALL.md](docs/INSTALL.md)**.
+For `/tweaklet` to be same-origin in dev, proxy it to the Tweaklet server from your dev server (in `vite.config.ts`, `server.proxy`: `"/tweaklet": "http://127.0.0.1:4319"`). `VITE_TWEAKLET_URL` is an optional override. For Next.js gate on `process.env.NEXT_PUBLIC_TWEAKLET_URL`. Full framework-by-framework details are in **[docs/INSTALL.md](docs/INSTALL.md)**.
 
 **Claude Code users:** run the `install-tweaklet-widget` skill to automate this — Claude finds your entry document and inserts the snippet with per-environment gating.
 

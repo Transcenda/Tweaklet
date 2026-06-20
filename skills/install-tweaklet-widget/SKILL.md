@@ -64,22 +64,35 @@ The static tag above will attempt to load the widget on every environment. For m
 
 ### Vite (React / Vue / plain)
 
-Replace the static `<script>` tag with an inline module that reads an env variable:
+Replace the static `<script>` tag with an inline module that defaults to `/tweaklet` in dev and loads nothing in a production build — no `.env` file required:
 
 ```html
 <!-- Tweaklet AI tweak panel (dev only) -->
 <script type="module">
-  const url = import.meta.env.VITE_TWEAKLET_URL;
+  // Dev: load same-origin from /tweaklet (no env var or .env file needed).
+  // Production build: off. import.meta.env.DEV is true under `vite dev`,
+  // false under `vite build`.
+  const url = import.meta.env.VITE_TWEAKLET_URL || (import.meta.env.DEV ? "/tweaklet" : "");
   if (url) {
     const s = document.createElement("script");
     s.src = url + "/widget.js";
     s.async = true;
-    document.head.appendChild(s);
+    document.body.appendChild(s);
   }
 </script>
 ```
 
-Set `VITE_TWEAKLET_URL=/tweaklet` in `.env.development` (or `.env.local`) and leave it unset in `.env.production`. When the variable is absent the snippet is a no-op.
+For `/tweaklet` to be same-origin, the dev server must proxy it to the Tweaklet server. In `vite.config.ts`:
+
+```ts
+server: {
+  proxy: {
+    "/tweaklet": "http://127.0.0.1:4319",
+  },
+}
+```
+
+`VITE_TWEAKLET_URL` is optional and only needed as an override — for a non-default base path, or to force the widget into a production-mode build (e.g. a staging or dev image).
 
 ### Next.js (App Router)
 
@@ -102,7 +115,7 @@ Same pattern inside `<Head>` or `<body>`, gated on `process.env.NEXT_PUBLIC_TWEA
 
 ### SvelteKit
 
-Use `import.meta.env.VITE_TWEAKLET_URL` (SvelteKit exposes Vite env vars); same snippet as the Vite pattern above.
+SvelteKit runs on Vite, so use the same pattern as above: default to `/tweaklet` in dev via `import.meta.env.DEV`, with `VITE_TWEAKLET_URL` as an optional override. Add the same `/tweaklet` proxy to your Vite config.
 
 ### Server-rendered templates (Rails / Django / Laravel)
 
@@ -132,8 +145,8 @@ After editing the entry document, ask the developer to:
 3. Complete the Tweaklet Setup Wizard's **"Verify in your app"** step — it will confirm the widget is reachable from the server side.
 
 If the launcher does not appear, check:
-- The reverse proxy is running and forwarding `/tweaklet/*` to the Tweaklet server.
-- The env variable is set (if using the gated snippet).
+- The reverse proxy (or, in local dev, the dev-server proxy) is forwarding `/tweaklet/*` to the Tweaklet server.
+- For the Vite dev-gated snippet, the app is running under `vite dev` (not a production build), and any `VITE_TWEAKLET_URL` override resolves to a reachable path.
 - There are no browser console errors about a blocked or failed script load.
 
 ---
