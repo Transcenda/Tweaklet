@@ -4,7 +4,7 @@
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)
 
-**Everyone is a builder now — describe a change, see it in the running app, and ship it as a PR.**
+**Everyone is a builder now — describe a change for an AI agent, see it instantly in the running app, and ship it as a PR.**
 
 Tweaklet is an AI panel that lives inside your app. Point at something, say what you want changed, watch it happen in the running app — then ship it as a pull request.
 
