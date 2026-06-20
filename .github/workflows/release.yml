@@ -1,0 +1,46 @@
+name: Release
+
+# Cut a release: bump the version into the tag and push it, e.g.
+#   git tag v0.1.0 && git push origin v0.1.0
+# The version is taken from the tag; this builds server + widget, packs a
+# prebuilt tarball, and publishes a GitHub Release with a STABLE asset name
+# (tweaklet-server.tgz) so installs can use the /releases/latest/download URL.
+# Uses the built-in GITHUB_TOKEN — no external account or secret required.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, pack, and publish a GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps (skip prepare) + build server + widget
+        run: |
+          npm ci --ignore-scripts
+          npm run build:all
+
+      - name: Set version from the tag + pack (stable asset name)
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          npm version --no-git-tag-version --allow-same-version "${TAG_NAME#v}"
+          npm pack
+          mv tweaklet-server-*.tgz tweaklet-server.tgz
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: gh release create "$TAG_NAME" tweaklet-server.tgz --title "Tweaklet $TAG_NAME" --generate-notes

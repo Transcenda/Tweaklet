@@ -10,12 +10,12 @@
 
 ## Bootstrap
 
-### Quick start (install from GitHub)
+### Quick start (install from GitHub Releases)
 
-npm installs straight from the repo and builds it on install — server **and** web panel bundled, no npm registry/account needed:
+Install the prebuilt release tarball — server **and** web panel bundled, no npm registry/account needed:
 
 ```bash
-npm install -g github:Transcenda/Tweaklet#v0.0.1   # or #main for latest
+npm i -g https://github.com/Transcenda/Tweaklet/releases/latest/download/tweaklet-server.tgz
 tweaklet serve                                      # default port 4319
 ```
 

@@ -96,7 +96,7 @@ See **[docs/INSTALL.md](docs/INSTALL.md)** for the full bootstrap, reverse-proxy
 Short version:
 
 ```bash
-npm install -g github:Transcenda/Tweaklet#v0.0.1   # installs + builds from the repo (server + widget)
+npm i -g https://github.com/Transcenda/Tweaklet/releases/latest/download/tweaklet-server.tgz
 tweaklet serve                                      # default port 4319
 # …or from a clone:
 npm install && npm run build:all && node dist/index.js serve
