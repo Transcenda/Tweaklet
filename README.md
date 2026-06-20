@@ -125,9 +125,7 @@ The widget derives its server base from its own `src` at runtime (no build-time 
 
 For Next.js gate on `process.env.NEXT_PUBLIC_TWEAKLET_URL`. Full framework-by-framework details are in **[docs/INSTALL.md](docs/INSTALL.md)**.
 
-**Claude Code users:** run the `install-tweaklet-widget` skill to automate this — Claude will find your entry document and insert the snippet with appropriate per-environment gating.
-
-Config lives in `~/.tweaklet/config.json` (0600). The agent runs key-less on Vertex via ADC.
+**Claude Code users:** run the `install-tweaklet-widget` skill to automate this — Claude finds your entry document and inserts the snippet with per-environment gating.
 
 ### Branch naming
 
