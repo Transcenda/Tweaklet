@@ -8,7 +8,7 @@
 
 Tweaklet gives product managers, designers, QA engineers, founders, and other non-technical team members a simple way to propose UI changes directly inside the product they are using.
 
-Engineers stay in control of the real system: codebase access, agent instructions, data model, guardrails, environments, permissions, review flow, and deployment pipeline.
+Engineers are building an AI harness as a foundation for team productivity: codebase access, agent instructions, data model, guardrails, environments, permissions, review flow, and deployment pipeline.
 
 Tweaklet is not trying to replace engineering. It gives the rest of the team a safer, faster way to express product changes in context.
 
