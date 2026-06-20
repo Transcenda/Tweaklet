@@ -6,19 +6,15 @@
 
 **Everyone is a builder now — describe a change, see it in the running app, and ship it as a PR.**
 
-Tweaklet gives product managers, designers, QA engineers, founders, and other non-technical team members a simple way to propose UI changes directly inside the product they are using.
+Tweaklet is an AI panel that lives inside your app. Point at something, say what you want changed, watch it happen in the running app — then ship it as a pull request.
 
-Engineers are building an AI harness as a foundation for team productivity: codebase access, agent instructions, data model, guardrails, environments, permissions, review flow, and deployment pipeline.
-
-Tweaklet is not trying to replace engineering. It gives the rest of the team a safer, faster way to express product changes in context.
+Engineers build the harness — the repo, the agent, the guardrails, the review flow. Everyone else builds on top of it.
 
 ---
 
 ## What is Tweaklet?
 
-Tweaklet is an embeddable AI widget that opens as an expandable panel inside your application.
-
-Users can select parts of the UI, describe what they want to change, and let the AI agent generate proposed updates.
+Tweaklet is a widget that embeds in your app and opens as a panel. Pick a part of the UI, describe the change in plain words, and the AI agent proposes the edit.
 
 Example prompts:
 
@@ -29,21 +25,21 @@ Change this empty state copy to sound less technical and add a secondary action.
 Make this form more compact, but keep all validation messages visible.
 ```
 
-Under the hood, Tweaklet runs the user's request through your repository, design rules, product context, and engineering guardrails.
+Every request runs through your repository, your design rules, and your guardrails — the agent works inside them, never around them.
 
 ## Why Tweaklet?
 
-Historically, handing changes from product, design, and QA to engineering has been slow and inefficient. For large changes that handover is fine — but for **small** ones it's backwards: waiting for an engineer to free up to make a trivial tweak wastes far more time than the tweak itself.
+The smallest changes wait the longest. A copy fix, a spacing tweak, a tooltip — minutes of real work, stuck in a queue behind everything bigger, passed between product, design, QA, and engineering until someone has time.
 
-Tweaklet removes that handover entirely for small UI changes. The person who spotted the change makes it — and iterates through as many rounds as they need — on their own, with no handoff between product, design, QA, and engineering. It gets done instantly and ships as a PR that still passes every quality gate your team already has.
+Tweaklet skips the queue. The person who spots the change makes it — describe it, see it in the running app, iterate until it's right — and ships it as a PR. No handoff. The same quality gates your team already trusts.
 
 ## Who is it for?
 
-- **Product Managers** — propose product improvements without writing detailed technical tickets.
-- **Designers** — request pixel-level UI refinements directly in the actual app, not only in design tools.
-- **QA Engineers** — report broken UI states with full page context and suggested fixes.
-- **Founders & stakeholders** — experiment with copy, layout, and simple UX improvements without interrupting engineering flow too early.
-- **Engineers** — give the broader team a safe contribution interface while keeping control over architecture, code quality, data access, agent behavior, and release process.
+- **Product managers** — ship the small improvements you'd normally write a ticket for.
+- **Designers** — refine the real UI, not just the mockup.
+- **QA** — fix the broken state you found, with full page context.
+- **Founders & stakeholders** — try copy, layout, and UX ideas without pulling engineers off their work.
+- **Engineers** — give the team a safe way to contribute, and keep control of the architecture, code quality, and release flow.
 
 ## Core idea
 
