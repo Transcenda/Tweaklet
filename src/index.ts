@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { runInit, type InitOptions } from "./wizard/init.js";
-import { loadConfig } from "./config/config.js";
+import { resolveConfig } from "./config/config.js";
 import { serve } from "./server/server.js";
 import { stopServer } from "./agent/opencode-server.js";
 import { runDiagnostics, type CheckStatus } from "./doctor/doctor.js";
@@ -46,7 +46,7 @@ async function main(): Promise<void> {
     return;
   }
   if (cmd === "serve") {
-    const config = loadConfig();
+    const config = resolveConfig();
     if (!config.access?.allowedLogins?.length && !config.access?.allowedUserIds?.length) {
       console.warn("tweaklet WARNING: no access allowlist configured — any authenticated GitHub user can sign in. Set access.allowedLogins in your config.");
     }
@@ -57,9 +57,10 @@ async function main(): Promise<void> {
   if (cmd === "doctor") {
     let config;
     try {
-      config = loadConfig();
-    } catch {
-      console.error("No tweaklet config found. Run `tweaklet init` first.");
+      config = resolveConfig();
+    } catch (e) {
+      console.error("Could not resolve a tweaklet config (auto-detection failed). Run `tweaklet init` to write one.");
+      console.error(e instanceof Error ? e.message : e);
       process.exit(1);
     }
     const checks = await runDiagnostics(config);

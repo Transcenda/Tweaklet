@@ -2,7 +2,16 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, saveConfig, configExists, ConfigSchema, type TweakletConfig } from "./config.js";
+import {
+  loadConfig,
+  saveConfig,
+  configExists,
+  configPath,
+  resolveConfig,
+  hasOperationalEssentials,
+  ConfigSchema,
+  type TweakletConfig,
+} from "./config.js";
 
 let home: string;
 beforeEach(() => {
@@ -204,5 +213,89 @@ describe("config", () => {
       setup: { completed: false },
     });
     expect(c.preview).toBeUndefined();
+  });
+});
+
+describe("hasOperationalEssentials", () => {
+  const base = ConfigSchema.parse({
+    server: { port: 4319, publicUrl: "http://localhost:4319", sessionSecret: "z".repeat(32) },
+  });
+
+  it("is false with no agent and no repo", () => {
+    expect(hasOperationalEssentials(base)).toBe(false);
+  });
+
+  it("is false with an agent but no repo path/allowlist", () => {
+    const cfg = ConfigSchema.parse({ ...base, agent: { command: "opencode", cwd: "/x" } });
+    expect(hasOperationalEssentials(cfg)).toBe(false);
+  });
+
+  it("is true with agent + repo.path", () => {
+    const cfg = ConfigSchema.parse({
+      ...base,
+      agent: { command: "opencode", cwd: "/x" },
+      repo: { path: "/x" },
+    });
+    expect(hasOperationalEssentials(cfg)).toBe(true);
+  });
+
+  it("is true with agent + a non-empty allowlist (no cloned path yet)", () => {
+    const cfg = ConfigSchema.parse({
+      ...base,
+      agent: { command: "opencode", cwd: "/x" },
+      repo: { path: "", allowlist: ["owner/repo"] },
+    });
+    expect(hasOperationalEssentials(cfg)).toBe(true);
+  });
+});
+
+describe("resolveConfig", () => {
+  it("loads an existing config as-is (file wins, no overwrite)", () => {
+    saveConfig(valid);
+    const resolved = resolveConfig();
+    expect(resolved).toEqual(valid);
+  });
+
+  it("heals setup.completed on an operationally-complete loaded config", () => {
+    const fnal = {
+      ...valid,
+      agent: { command: "opencode", cwd: "/app" },
+      repo: { path: "/app", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: [] },
+      setup: { completed: false },
+    } as TweakletConfig;
+    saveConfig(fnal);
+    const resolved = resolveConfig();
+    expect(resolved.setup.completed).toBe(true);
+    // persisted, so the next load is already healed
+    expect(loadConfig().setup.completed).toBe(true);
+  });
+
+  it("leaves setup.completed false on an empty/incomplete loaded config", () => {
+    saveConfig(valid); // no agent, no repo → not operationally complete
+    const resolved = resolveConfig();
+    expect(resolved.setup.completed).toBe(false);
+  });
+
+  it("synthesizes + persists a config when none exists", () => {
+    // Run inside a non-git temp dir so detection takes its fallback branches
+    // (repoPath = cwd, baseBranch = main) — no real subprocess assumptions.
+    const cwd = mkdtempSync(join(tmpdir(), "tweaklet-cwd-"));
+    try {
+      expect(configExists()).toBe(false);
+      const resolved = resolveConfig({ cwd });
+      expect(configExists()).toBe(true);
+      expect(resolved.setup.completed).toBe(true);
+      expect(resolved.agent?.cwd).toBe(cwd);
+      expect(resolved.repo?.path).toBe(cwd);
+      expect(resolved.server.sessionSecret.length).toBeGreaterThanOrEqual(16);
+      // a stable secret: re-resolving loads the same persisted file
+      const again = resolveConfig({ cwd });
+      expect(again.server.sessionSecret).toBe(resolved.server.sessionSecret);
+      // and it actually wrote to configPath()
+      expect(loadConfig().server.sessionSecret).toBe(resolved.server.sessionSecret);
+      expect(configPath()).toContain(".tweaklet");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });

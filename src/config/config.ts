@@ -2,6 +2,14 @@ import { z } from "zod";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
+import {
+  detectRepoPath,
+  detectBaseBranch,
+  detectOpencode,
+  detectVertexProject,
+  detectGhLogin,
+  generateSessionSecret,
+} from "./detect.js";
 
 // A git ref / branch name that gets passed to git on the CLI. Reject a
 // leading '-' so a misconfigured value can't be read as an argv flag. This is
@@ -114,4 +122,89 @@ export function loadConfig(): TweakletConfig {
     chmodSync(configPath(), 0o600);
   }
   return ConfigSchema.parse(JSON.parse(readFileSync(configPath(), "utf8")));
+}
+
+/**
+ * Does a config have what it needs to actually run? An agent command plus a repo
+ * to work on (either a cloned `repo.path` or a non-empty allowlist the user can
+ * clone from). Used to decide whether a config with `setup.completed === false`
+ * is in fact functional and should stop showing the setup wizard/token.
+ */
+export function hasOperationalEssentials(cfg: TweakletConfig): boolean {
+  return !!cfg.agent?.command && !!(cfg.repo?.path || (cfg.repo?.allowlist?.length ?? 0) > 0);
+}
+
+/**
+ * Resolve a runnable config without requiring the user to hand-write one.
+ *
+ * - If a config file exists, load it (the file always wins — we never overwrite
+ *   the user's values), then *heal* its setup-completion flag: a config that is
+ *   operationally complete but still marked `setup.completed: false` gets flipped
+ *   to true and persisted, so it stops printing the one-time setup token.
+ * - If no config file exists, synthesize one from the ambient environment
+ *   (git repo root, origin's default branch, the `opencode` binary, the active
+ *   gcloud project, the logged-in gh user) plus schema defaults, persist it
+ *   (so the generated session secret is stable and the user can inspect/edit it),
+ *   and return it. A synthesized config is treated as configured for solo local
+ *   use (`setup.completed: true`).
+ */
+export function resolveConfig(opts?: { cwd?: string }): TweakletConfig {
+  if (configExists()) {
+    const loaded = loadConfig();
+    if (!loaded.setup.completed && hasOperationalEssentials(loaded)) {
+      const healed = { ...loaded, setup: { completed: true } };
+      saveConfig(healed);
+      console.error(
+        `tweaklet: existing config is operationally complete — marking setup as done (healed ${configPath()}).`,
+      );
+      return healed;
+    }
+    return loaded;
+  }
+
+  const cwd = opts?.cwd ?? process.cwd();
+  const repoPath = detectRepoPath(cwd);
+  const baseBranch = detectBaseBranch(repoPath);
+  const opencode = detectOpencode();
+  const vertexProject = detectVertexProject();
+  const ghLogin = detectGhLogin();
+
+  const input: TweakletConfigInput = {
+    server: {
+      port: 4319,
+      publicUrl: "http://localhost:4319",
+      sessionSecret: generateSessionSecret(),
+    },
+    agent: {
+      command: opencode,
+      cwd: repoPath,
+      vertexProject,
+      vertexLocation: "global",
+      model: "google-vertex-ai/gemini-2.5-pro",
+    },
+    repo: {
+      path: repoPath,
+      baseBranch,
+      prTarget: baseBranch,
+    },
+    access: ghLogin ? { allowedLogins: [ghLogin] } : undefined,
+    setup: { completed: true },
+  };
+
+  const parsed = ConfigSchema.parse(input);
+  saveConfig(parsed);
+
+  console.error(
+    [
+      "tweaklet: no config found — auto-detected one from the environment:",
+      `  repo path:      ${repoPath}`,
+      `  base branch:    ${baseBranch}`,
+      `  opencode:       ${opencode}`,
+      `  vertex project: ${vertexProject ?? "none"}`,
+      `  gh login:       ${ghLogin ?? "none"}`,
+      `  written to:     ${configPath()}`,
+    ].join("\n"),
+  );
+
+  return parsed;
 }
