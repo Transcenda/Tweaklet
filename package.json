@@ -1,7 +1,6 @@
 {
   "name": "@tweaklet/server",
   "version": "0.0.1",
-  "private": true,
   "description": "Everyone is a builder now — describe a change, see it in the running app, and ship it as a PR.",
   "license": "MIT",
   "author": "Joseph Chereshnovsky <jchereshnovsky@transcenda.com> (Transcenda)",
@@ -27,12 +26,22 @@
   "bin": {
     "tweaklet": "./dist/index.js"
   },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "web/dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "build:web": "npm --prefix web install && npm --prefix web run build",
     "build:all": "npm run build && npm run build:web",
+    "prepublishOnly": "npm run build:all",
     "dev": "tsx src/index.ts"
   },
   "dependencies": {

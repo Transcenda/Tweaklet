@@ -10,19 +10,23 @@
 
 ## Bootstrap
 
+### Quick start (npm)
+
+The published package bundles the server **and** the web panel:
+
 ```bash
-# 1. Clone and build
-git clone https://github.com/your-org/tweaklet
-cd tweaklet
-npm install
-npm run build
+npx @tweaklet/server serve                 # default port 4319
+# …or install it:
+npm install -g @tweaklet/server && tweaklet serve
+```
 
-# 2. Build the web panel
-npm --prefix web install
-npm --prefix web run build
+### From source
 
-# 3. Start the server (default port 4319)
-node dist/index.js serve
+```bash
+git clone https://github.com/Transcenda/Tweaklet
+cd Tweaklet
+npm install && npm run build:all            # server + web panel
+node dist/index.js serve                    # default port 4319
 ```
 
 On first start while unconfigured the server prints a **setup token** to the log:

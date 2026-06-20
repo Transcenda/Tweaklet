@@ -1,0 +1,41 @@
+name: Publish to npm
+
+# Tag a release to publish: bump intent in the tag (e.g. `git tag v0.1.0 && git push --tags`).
+# The package version is taken from the tag, so package.json doesn't need a manual bump.
+# Requires the `NPM_TOKEN` repo secret (an npm automation token for the @tweaklet org).
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build & publish @tweaklet/server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install server deps
+        run: npm ci
+
+      - name: Set version from the tag
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: npm version --no-git-tag-version --allow-same-version "${TAG_NAME#v}"
+
+      - name: Build server + widget
+        run: npm run build:all
+
+      - name: Publish (public, scoped)
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

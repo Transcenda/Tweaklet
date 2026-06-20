@@ -96,9 +96,9 @@ See **[docs/INSTALL.md](docs/INSTALL.md)** for the full bootstrap, reverse-proxy
 Short version:
 
 ```bash
-npm install && npm run build
-npm --prefix web install && npm --prefix web run build
-node dist/index.js serve          # default port 4319
+npx @tweaklet/server serve        # run the published package (server + bundled widget); default port 4319
+# …or from source:
+npm install && npm run build:all && node dist/index.js serve
 ```
 
 On first start the server prints a **setup token**. Expose `/tweaklet/*` via your reverse proxy, then open `https://<your-host>/tweaklet/` in a browser and enter the token — the Setup Wizard guides the rest (GitHub OAuth, Vertex, repo clone, guardrails).
