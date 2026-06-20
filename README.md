@@ -33,15 +33,9 @@ Under the hood, Tweaklet runs the user's request through your repository, design
 
 ## Why Tweaklet?
 
-Most product feedback loses context. A designer comments in Figma, a PM writes a ticket, a stakeholder shares a screenshot — and an engineer has to reconstruct what the person meant.
+Historically, handing changes from product, design, and QA to engineering has been slow and inefficient. For large changes that handover is fine — but for **small** ones it's backwards: waiting for an engineer to free up to make a trivial tweak wastes far more time than the tweak itself.
 
-Tweaklet changes this flow. Instead of describing the app from the outside, users work directly inside the running product:
-
-1. Open Tweaklet.
-2. Select the UI area they want to change.
-3. Describe the change in natural language.
-4. Preview or submit an AI-generated proposal.
-5. Let engineers review, refine, and ship safely.
+Tweaklet removes that handover entirely for small UI changes. The person who spotted the change makes it — and iterates through as many rounds as they need — on their own, with no handoff between product, design, QA, and engineering. It gets done instantly and ships as a PR that still passes every quality gate your team already has.
 
 ## Who is it for?
 
