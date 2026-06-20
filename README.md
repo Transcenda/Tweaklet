@@ -91,10 +91,6 @@ Tweaklet.init({
 });
 ```
 
-## Security principles
-
-Never expose repository secrets to the browser. Never run code generation from the frontend. Authenticate every request, authorize every action, log all prompts and generated outputs, keep agent execution isolated, use short-lived credentials, require review before production changes, make permissions explicit, and keep audit trails.
-
 ## Status
 
 Tweaklet is currently an experimental product concept. The initial goal is to validate the core workflow:
