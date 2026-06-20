@@ -41,7 +41,7 @@
     "build": "tsc -p tsconfig.build.json",
     "build:web": "npm --prefix web install && npm --prefix web run build",
     "build:all": "npm run build && npm run build:web",
-    "prepublishOnly": "npm run build:all",
+    "prepare": "npm run build:all",
     "dev": "tsx src/index.ts"
   },
   "dependencies": {

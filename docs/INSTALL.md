@@ -10,14 +10,13 @@
 
 ## Bootstrap
 
-### Quick start (npm)
+### Quick start (install from GitHub)
 
-The published package bundles the server **and** the web panel:
+npm installs straight from the repo and builds it on install — server **and** web panel bundled, no npm registry/account needed:
 
 ```bash
-npx @tweaklet/server serve                 # default port 4319
-# …or install it:
-npm install -g @tweaklet/server && tweaklet serve
+npm install -g github:Transcenda/Tweaklet#v0.0.1   # or #main for latest
+tweaklet serve                                      # default port 4319
 ```
 
 ### From source

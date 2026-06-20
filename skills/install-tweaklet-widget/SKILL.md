@@ -20,7 +20,7 @@ The drop-in snippet:
 
 **Reverse-proxy requirement:** The host origin must forward `/tweaklet/*` to the Tweaklet server so the widget, panel assets, and agent API all share the same origin as the host app. See the Caddy / nginx snippets in `docs/INSTALL.md`.
 
-**Running the server:** the Tweaklet server ships as the `@tweaklet/server` npm package (it bundles `widget.js`). Run it with `npx @tweaklet/server serve` (or `npm i -g @tweaklet/server && tweaklet serve`), then finish setup in the browser. Full guide: `docs/INSTALL.md`. This skill only inserts the client `<script>`; a running server is a prerequisite.
+**Running the server:** the Tweaklet server installs straight from the GitHub repo and bundles `widget.js`: `npm i -g github:Transcenda/Tweaklet#v0.0.1 && tweaklet serve`, then finish setup in the browser. Full guide: `docs/INSTALL.md`. This skill only inserts the client `<script>`; a running server is a prerequisite.
 
 ---
 
