@@ -1,0 +1,491 @@
+/* tweaklet panel — "workshop" aesthetic.
+   Monospace-forward agent console on warm paper; emerald accent = "ship".
+   Self-hosted / air-gapped → no web-font CDN; identity comes from the system
+   monospace + warm palette + precise spacing, not a downloaded typeface. */
+
+/* Theme variables bind to BOTH :host (the Shadow root host — how the widget is
+   actually mounted) and :root (any light-DOM use / tests). `:root` alone does
+   NOT match inside a shadow tree, which would leave every var(--…) unresolved
+   and the whole UI unthemed. */
+:host, :root {
+  --paper:      #f7f6f3;
+  --surface:    #fffefb;
+  --surface-2:  #f1efe9;
+  --ink:        #23211d;
+  --ink-2:      #57534c;
+  --muted:      #8a857b;
+  --line:       #e7e3da;
+  --line-2:     #dbd6cb;
+  --accent:     #0f9d6b;
+  --accent-d:   #0b7d54;
+  --accent-tint:#0f9d6b16;
+  --err:        #c4453b;
+  --err-tint:   #c4453b12;
+  --warn:       #b8801f;
+
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", "Consolas", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", sans-serif;
+  --r: 12px;
+  --r-sm: 9px;
+  --shadow: 0 1px 2px rgba(35,33,29,.04), 0 10px 28px -14px rgba(35,33,29,.16);
+}
+
+* { box-sizing: border-box; }
+::selection { background: var(--accent-tint); }
+
+/* ── self-mounted launcher + dock (Shadow DOM, no iframe) ─────────────────
+   The widget renders a floating edge toggle (apz-launcher) and a right-docked
+   panel (apz-dock) that slides in when open. These live in the host page's
+   shadow tree; everything inside the dock inherits the panel's warm theme. */
+.apz-launcher {
+  position: fixed; top: 50%; right: 0; transform: translateY(-50%);
+  width: 22px; height: 74px; padding: 0;
+  border: 1px solid var(--line); border-right: 0; border-radius: 10px 0 0 10px;
+  background: var(--surface); color: var(--accent);
+  font-family: var(--sans); font-size: 14px; cursor: pointer;
+  z-index: 2147483647; box-shadow: -5px 0 16px -8px rgba(0,0,0,.2);
+  display: grid; place-items: center;
+  transition: right .24s cubic-bezier(.2,.8,.2,1), background .15s;
+}
+.apz-launcher:hover { background: var(--surface-2); }
+.apz-launcher.is-open { right: min(400px, 92vw); }
+
+.apz-dock {
+  position: fixed; top: 0; right: 0;
+  width: 400px; max-width: 92vw; height: 100%;
+  border: 0; border-left: 1px solid var(--line);
+  z-index: 2147483646; background: var(--paper);
+  box-shadow: -14px 0 36px -18px rgba(0,0,0,.25);
+  transform: translateX(100%);
+  transition: transform .24s cubic-bezier(.2,.8,.2,1);
+  color: var(--ink);
+  font-family: var(--sans); font-size: 14px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+}
+.apz-dock.is-open { transform: translateX(0); }
+
+.apz {
+  display: flex; flex-direction: column;
+  height: 100%; min-height: 0;
+  background:
+    radial-gradient(130% 70% at 100% -10%, #fffdf6 0%, rgba(255,253,246,0) 55%),
+    var(--paper);
+}
+
+/* ── brand mark (sign-in card) ───────────────────────── */
+.apz-mark {
+  width: 16px; height: 16px; border-radius: 5px; flex: none;
+  background: linear-gradient(135deg, var(--accent), #18c98a);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+.apz-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.apz-dot--ok   { background: var(--accent); }
+.apz-dot--warn { background: var(--warn); }
+.apz-dot--fail { background: var(--err); }
+
+/* ── account & status menu ───────────────────────────── */
+.apz-avatar {
+  position: relative; width: 26px; height: 26px; border-radius: 50%; flex: none;
+  border: 1px solid var(--line); background: var(--surface);
+  font-family: var(--sans); font-size: 12px; font-weight: 600; color: var(--ink-2);
+  display: grid; place-items: center; transition: border-color .15s, background .15s;
+}
+button.apz-avatar { cursor: pointer; }
+button.apz-avatar:hover { border-color: var(--line-2); background: var(--surface-2); color: var(--ink); }
+.apz-avatar-dot {
+  position: absolute; right: -1px; bottom: -1px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--muted); border: 1.5px solid var(--paper);
+}
+.apz-avatar-dot--ok   { background: var(--accent); }
+.apz-avatar-dot--warn { background: var(--warn); }
+.apz-avatar-dot--fail { background: var(--err); }
+.apz-avatar--static { width: 32px; height: 32px; font-size: 14px; }
+
+.apz-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; width: min(300px, 84vw);
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm);
+  box-shadow: var(--shadow); overflow: hidden; text-align: left;
+  animation: apz-rise .22s ease both;
+}
+.apz-menu-user {
+  display: flex; align-items: center; gap: 10px; padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.apz-menu-user b { font-family: var(--sans); font-size: 13px; display: block; color: var(--ink); }
+.apz-menu-sub { font-size: 11px; color: var(--muted); }
+.apz-menu-stat {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--ink-2);
+}
+.apz-menu-stat b { font-family: var(--sans); font-size: 11px; color: var(--ink); white-space: nowrap; }
+.apz-menu-section { padding: 6px; }
+.apz-menu-section-head {
+  display: flex; align-items: center; gap: 8px; padding: 7px 9px 9px;
+  font-family: var(--sans); font-size: 10.5px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .05em;
+}
+.apz-check { display: flex; gap: 9px; align-items: baseline; padding: 7px 9px; }
+.apz-check + .apz-check { border-top: 1px solid var(--line); }
+.apz-check b { font-family: var(--sans); font-size: 12px; font-weight: 600; min-width: 104px; flex: none; }
+.apz-check > span { font-size: 12px; color: var(--ink-2); }
+.apz-check .apz-fix { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+
+/* ── flow timeline ──────────────────────────────────── */
+.apz-flow {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 15px 14px 13px; border-bottom: 1px solid var(--line);
+}
+.apz-steps { flex: 1; display: flex; }
+.apz-step {
+  flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  background: none; border: 0; padding: 0; cursor: pointer; color: var(--muted);
+}
+.apz-step:disabled { cursor: default; }
+.apz-step-dot {
+  width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--line-2);
+  background: var(--surface); z-index: 1;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+}
+.apz-step-label { font-family: var(--sans); font-size: 11px; }
+/* connector line from the previous dot to this one */
+.apz-step:not(:first-child)::before {
+  content: ""; position: absolute; top: 6px; right: 50%; width: 100%; height: 2px;
+  background: var(--line-2); z-index: 0; transition: background .15s;
+}
+.apz-step.is-done .apz-step-dot { background: var(--accent); border-color: var(--accent); }
+.apz-step.is-active .apz-step-dot { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 0 4px var(--accent-tint); }
+.apz-step.is-done .apz-step-label { color: var(--ink-2); }
+/* The current step is the actionable one — make it stand out from done/upcoming. */
+.apz-step.is-active .apz-step-label { color: var(--accent-d); font-weight: 600; }
+.apz-step.is-done::before, .apz-step.is-active::before { background: var(--accent); }
+.apz-step:not(:disabled):hover .apz-step-dot { border-color: var(--accent); }
+
+/* (Explore/Build mode toggle removed — one unified agent infers ask-vs-build.) */
+
+.apz-flow-tools { display: flex; align-items: center; gap: 5px; flex: none; position: relative; }
+.apz-reject {
+  font-family: var(--sans); font-size: 11px; cursor: pointer; flex: none;
+  color: var(--err); background: var(--err-tint);
+  border: 1px solid color-mix(in srgb, var(--err) 28%, transparent);
+  border-radius: 8px; padding: 4px 9px; transition: background .15s, border-color .15s;
+}
+.apz-reject:hover:not(:disabled) { background: color-mix(in srgb, var(--err) 14%, transparent); border-color: var(--err); }
+.apz-reject:disabled { opacity: .45; cursor: default; }
+.apz-icon {
+  width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink-2); cursor: pointer; font-size: 13px;
+  display: grid; place-items: center; transition: border-color .15s, color .15s, background .15s;
+}
+.apz-icon:hover:not(:disabled) { border-color: var(--line-2); color: var(--ink); background: var(--surface-2); }
+.apz-icon:disabled { opacity: .45; cursor: default; }
+
+/* ── stream ─────────────────────────────────────────── */
+.apz-stream {
+  flex: 1; min-height: 0; overflow-y: auto; padding: 18px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.apz-stream::-webkit-scrollbar { width: 11px; }
+.apz-stream::-webkit-scrollbar-thumb {
+  background: var(--line-2); border: 3px solid var(--paper); border-radius: 99px;
+}
+
+.apz-row { animation: apz-rise .28s cubic-bezier(.2,.8,.2,1) both; }
+.apz-you {
+  align-self: flex-end; max-width: 86%; background: var(--accent); color: #fff;
+  padding: 9px 13px; border-radius: 15px 15px 4px 15px; box-shadow: var(--shadow);
+  white-space: pre-wrap; word-break: break-word;
+}
+/* The global ::selection tint is invisible on the emerald bubble — give the
+   user's own messages a high-contrast selection so the highlight actually shows. */
+.apz-you::selection { background: rgba(255, 255, 255, 0.32); color: #fff; }
+.apz-you ::selection { background: rgba(255, 255, 255, 0.32); color: #fff; }
+.apz-assistant {
+  align-self: flex-start; max-width: 92%; background: var(--surface);
+  border: 1px solid var(--line); padding: 10px 13px; border-radius: 15px 15px 15px 4px;
+  white-space: pre-wrap; word-break: break-word; box-shadow: var(--shadow);
+}
+.apz-tool-row { align-self: stretch; font-family: var(--mono); font-size: 12px; }
+.apz-tool-head { display: flex; align-items: baseline; gap: 8px; padding: 2px 4px; }
+.apz-tool-glyph { color: var(--accent); flex: none; width: 12px; text-align: center; }
+.apz-tool-label {
+  color: var(--ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.apz-tool-more { margin: 3px 0 0 20px; }
+.apz-tool-more summary {
+  cursor: pointer; color: var(--muted); font-size: 11px; list-style: none; user-select: none; width: max-content;
+}
+.apz-tool-more summary::-webkit-details-marker { display: none; }
+.apz-tool-more summary::before { content: "▸ "; }
+.apz-tool-more[open] summary::before { content: "▾ "; }
+.apz-pre {
+  margin: 6px 0 0; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 10px; font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--ink-2);
+  white-space: pre-wrap; word-break: break-word; max-height: 280px; overflow: auto;
+}
+.apz-pre--out { color: var(--ink); }
+.apz-note {
+  align-self: center; font-family: var(--sans); font-size: 11px; color: var(--muted);
+  background: var(--surface-2); padding: 3px 11px; border-radius: 999px;
+}
+.apz-err {
+  align-self: flex-start; max-width: 92%; font-family: var(--sans); font-size: 12px;
+  color: var(--err); background: var(--err-tint);
+  border: 1px solid color-mix(in srgb, var(--err) 24%, transparent);
+  padding: 9px 12px; border-radius: 10px; white-space: pre-wrap; word-break: break-word;
+}
+
+.apz-run { align-self: flex-start; display: flex; gap: 5px; padding: 7px 5px; }
+.apz-run i {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+  animation: apz-pulse 1.1s infinite ease-in-out both;
+}
+.apz-run i:nth-child(2) { animation-delay: .18s; }
+.apz-run i:nth-child(3) { animation-delay: .36s; }
+
+.apz-working { align-self: flex-start; display: flex; align-items: center; gap: 8px; }
+.apz-stop {
+  font-family: var(--sans); font-size: 11px; cursor: pointer;
+  color: var(--err); background: var(--err-tint);
+  border: 1px solid color-mix(in srgb, var(--err) 28%, transparent);
+  border-radius: 7px; padding: 4px 11px; transition: background .15s, border-color .15s;
+}
+.apz-stop:hover { background: color-mix(in srgb, var(--err) 16%, transparent); border-color: var(--err); }
+
+.apz-empty { margin: auto; text-align: center; color: var(--muted); max-width: 300px; }
+.apz-caret { font-family: var(--sans); font-size: 30px; color: var(--accent); animation: apz-blink 1.1s steps(1) infinite; }
+.apz-empty p { margin: 12px 0 18px; font-size: 13px; line-height: 1.55; }
+.apz-chips { display: flex; flex-direction: column; gap: 7px; }
+.apz-chip {
+  font-family: var(--sans); font-size: 12px; text-align: left; color: var(--ink-2);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 9px;
+  padding: 9px 12px; cursor: pointer; transition: border-color .15s, transform .1s, color .15s;
+}
+.apz-chip:hover { border-color: var(--accent); color: var(--ink); transform: translateY(-1px); }
+
+.apz-pr {
+  align-self: stretch; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: var(--accent-tint); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 10px; padding: 11px 13px; font-family: var(--sans); font-size: 12px; color: var(--ink-2);
+}
+.apz-pr a { color: var(--accent-d); font-weight: 600; text-decoration: none; }
+.apz-pr a:hover { text-decoration: underline; }
+
+/* ── approval card (risky permission Allow/Deny) ─────── */
+.apz-approve {
+  align-self: stretch; background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--line));
+  border-left: 3px solid var(--warn);
+  border-radius: 10px; padding: 11px 13px; box-shadow: var(--shadow);
+}
+.apz-approve-title {
+  font-family: var(--sans); font-size: 12px; font-weight: 600; color: var(--ink);
+}
+.apz-approve .apz-pre { margin-top: 8px; }
+.apz-approve-actions { display: flex; gap: 8px; margin-top: 10px; }
+.apz-approve-allow, .apz-approve-deny {
+  font-family: var(--sans); font-size: 11px; cursor: pointer;
+  border-radius: 7px; padding: 5px 14px; transition: background .15s, border-color .15s;
+}
+.apz-approve-allow {
+  background: var(--accent); color: #fff; border: 1px solid var(--accent);
+}
+.apz-approve-allow:hover { background: var(--accent-d); border-color: var(--accent-d); }
+.apz-approve-deny {
+  background: var(--err-tint); color: var(--err);
+  border: 1px solid color-mix(in srgb, var(--err) 28%, transparent);
+}
+.apz-approve-deny:hover { background: color-mix(in srgb, var(--err) 16%, transparent); border-color: var(--err); }
+
+/* ── composer ───────────────────────────────────────── */
+.apz-composer {
+  border-top: 1px solid var(--line); padding: 8px; background: var(--surface);
+  animation: apz-drop .5s .05s cubic-bezier(.2,.8,.2,1) both;
+}
+.apz-input {
+  display: flex; align-items: flex-end; gap: 6px; background: var(--paper);
+  border: 1px solid var(--line-2); border-radius: 12px; padding: 6px 6px 6px 12px;
+  transition: border-color .15s, box-shadow .15s;
+}
+.apz-input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-tint); }
+.apz-input textarea {
+  flex: 1; border: none; background: none; resize: none; outline: none;
+  font-family: var(--sans); font-size: 14px; color: var(--ink); line-height: 1.45;
+  min-height: 22px; max-height: 160px; padding: 3px 0;
+}
+.apz-input textarea::placeholder { color: var(--muted); }
+.apz-send {
+  flex: none; width: 28px; height: 28px; border-radius: 50%; border: none; cursor: pointer;
+  background: var(--accent); color: #fff; font-size: 15px; line-height: 1;
+  display: grid; place-items: center; transition: background .15s, transform .08s;
+}
+.apz-send:hover:not(:disabled) { background: var(--accent-d); }
+.apz-send:active:not(:disabled) { transform: scale(.92); }
+.apz-send:disabled { background: var(--line-2); cursor: default; }
+
+.apz-ctx-pick {
+  flex: none; width: 28px; height: 28px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); font-size: 14px;
+  display: grid; place-items: center; transition: border-color .15s, background .15s;
+}
+.apz-ctx-pick:hover { border-color: var(--accent); background: var(--accent-tint); }
+.apz-ctx-chip {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0;
+  font-size: 11px; color: var(--accent-d); background: var(--accent-tint);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 8px; padding: 4px 6px 4px 9px;
+}
+.apz-ctx-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.apz-ctx-clear { flex: none; border: 0; background: none; color: var(--accent-d); cursor: pointer; font-size: 11px; padding: 0 2px; }
+.apz-ctx-clear:hover { color: var(--err); }
+/* Selected element shown just above the composer (not crammed into the textarea). */
+.apz-context-bar { padding: 8px 14px; border-top: 1px solid var(--line); background: var(--surface); display: flex; flex-wrap: wrap; gap: 6px; }
+.apz-context-bar .apz-ctx-chip { max-width: 100%; cursor: default; }
+.apz-context-bar .apz-ctx-chip:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
+
+.apz-controls { display: flex; flex-wrap: wrap; gap: 6px; }
+.apz-btn {
+  font-family: var(--sans); font-size: 11.5px; color: var(--ink-2); cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line-2); border-radius: 8px;
+  padding: 6px 10px; transition: border-color .15s, color .15s, background .15s;
+}
+.apz-btn:hover:not(:disabled) { border-color: var(--line-2); color: var(--ink); }
+.apz-btn:disabled { opacity: .45; cursor: default; }
+.apz-btn--ship { color: var(--accent-d); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
+.apz-btn--ship:hover:not(:disabled) { background: var(--accent-tint); border-color: var(--accent); color: var(--accent-d); }
+
+.apz-btn--primary {
+  background: var(--accent); color: #fff; border: 1px solid var(--accent);
+  font-size: 13px; padding: 10px 18px; text-decoration: none; display: inline-block;
+}
+.apz-btn--primary:hover { background: var(--accent-d); }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.apz-input:focus-within textarea:focus-visible { outline: none; }
+
+/* sign-in / loading card */
+.apz-auth { margin: auto; text-align: center; padding: 32px; }
+.apz-auth .apz-mark { width: 36px; height: 36px; border-radius: 11px; margin: 0 auto 16px; }
+.apz-auth h1 { font-family: var(--sans); font-weight: 600; font-size: 18px; letter-spacing: -.02em; margin: 0 0 6px; }
+.apz-auth p { color: var(--muted); font-size: 13px; margin: 0 0 20px; max-width: 240px; }
+
+@keyframes apz-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes apz-drop { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+@keyframes apz-pulse { 0%, 80%, 100% { transform: scale(.5); opacity: .4; } 40% { transform: scale(1); opacity: 1; } }
+@keyframes apz-blink { 50% { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+
+.apz-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 14px; border-bottom: 1px solid var(--line); background: var(--surface);
+}
+.apz-branch { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink); font-weight: 600; }
+.apz-branch--main { color: var(--ink-2); font-weight: 400; }
+.apz-branch-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+.apz-bar-actions { display: flex; gap: 6px; }
+.apz-bar-btn {
+  font-size: 11px; color: var(--ink-2); cursor: pointer; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.apz-bar-btn:hover:not(:disabled) { border-color: var(--line-2); color: var(--ink); }
+.apz-bar-btn:disabled { opacity: .45; cursor: default; }
+.apz-bar-btn--primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.apz-bar-btn--primary:hover:not(:disabled) { background: var(--accent-d); }
+
+.apz-history { border-bottom: 1px solid var(--line); background: var(--surface-2); max-height: 220px; overflow: auto; }
+.apz-history-empty { padding: 12px 14px; font-size: 12px; color: var(--muted); }
+.apz-saved { display: flex; align-items: center; gap: 9px; padding: 8px 14px; font-size: 12px; }
+.apz-saved + .apz-saved { border-top: 1px solid var(--line); }
+.apz-saved-dot { width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--line-2); background: var(--surface); flex: none; }
+.apz-saved.is-current .apz-saved-dot { background: var(--accent); border-color: var(--accent); }
+.apz-saved-msg { flex: 1; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.apz-saved-time { color: var(--muted); flex: none; }
+.apz-preview-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 14px; background: var(--accent-tint);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); font-size: 12px; color: var(--ink);
+}
+.apz-preview-actions { display: flex; gap: 6px; }
+
+/* ── Setup Wizard ─────────────────────────────────────── */
+.apz-setup { display: flex; flex-direction: column; height: 100vh; min-height: 0; overflow-y: auto; background: var(--paper); }
+.apz-setup-header { padding: 20px 20px 0; border-bottom: 1px solid var(--line); background: var(--surface); }
+.apz-setup-title { font-family: var(--sans); font-size: 16px; font-weight: 600; color: var(--ink); margin: 0 0 4px; display: flex; align-items: center; gap: 10px; }
+.apz-setup-sub { font-size: 12px; color: var(--muted); margin: 0 0 16px; }
+.apz-setup-steps { display: flex; flex-direction: column; gap: 0; padding: 12px 16px; flex: 1; }
+.apz-setup-step { border: 1px solid var(--line); border-radius: var(--r-sm); margin-bottom: 8px; background: var(--surface); overflow: hidden; }
+.apz-setup-step-head { display: flex; align-items: center; gap: 10px; padding: 11px 14px; cursor: pointer; background: none; width: 100%; border: 0; text-align: left; }
+.apz-setup-step-head:hover { background: var(--surface-2); }
+.apz-setup-step-status { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line-2); background: var(--surface); flex: none; display: grid; place-items: center; font-size: 10px; }
+.apz-setup-step-status--done { background: var(--accent); border-color: var(--accent); color: #fff; }
+.apz-setup-step-status--active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
+.apz-setup-step-label { font-family: var(--sans); font-size: 13px; font-weight: 600; color: var(--ink); flex: 1; }
+.apz-setup-step-label--done { color: var(--ink-2); font-weight: 400; }
+.apz-setup-step-chevron { color: var(--muted); font-size: 11px; }
+.apz-setup-step-body { padding: 4px 14px 14px; border-top: 1px solid var(--line); }
+.apz-setup-check { display: flex; align-items: flex-start; gap: 10px; padding: 7px 0; font-size: 12px; }
+.apz-setup-check + .apz-setup-check { border-top: 1px solid var(--line); }
+.apz-setup-check-name { font-weight: 600; min-width: 120px; }
+.apz-setup-check-detail { color: var(--ink-2); flex: 1; }
+.apz-setup-check-cmd { display: flex; align-items: flex-start; gap: 6px; margin-top: 6px; }
+.apz-setup-check-code { font-family: var(--mono); font-size: 11px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; flex: 1; overflow-x: auto; }
+.apz-setup-check-codeblock { white-space: pre; margin: 0; line-height: 1.65; }
+.apz-setup-check-fix { font-size: 11.5px; color: var(--ink-2); margin-top: 5px; line-height: 1.5; }
+.apz-setup-instructions { font-size: 12px; color: var(--ink-2); margin: 0 0 12px; line-height: 1.6; }
+.apz-setup-instructions a { color: var(--accent-d); }
+.apz-setup-cb-url { display: flex; align-items: center; gap: 8px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 10px 0; }
+.apz-setup-cb-url code { font-family: var(--mono); font-size: 11px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.apz-setup-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.apz-setup-field label { font-size: 11px; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: .04em; }
+.apz-setup-field input, .apz-setup-field select { font-family: var(--sans); font-size: 13px; padding: 7px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--paper); color: var(--ink); outline: none; transition: border-color .15s, box-shadow .15s; }
+.apz-setup-field input:focus, .apz-setup-field select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
+.apz-setup-field input::placeholder { color: var(--muted); }
+.apz-setup-error { font-size: 12px; color: var(--err); background: var(--err-tint); border: 1px solid color-mix(in srgb, var(--err) 24%, transparent); border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
+.apz-setup-actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.apz-setup-finish { padding: 16px 14px; text-align: center; }
+.apz-setup-finish p { font-size: 13px; color: var(--ink-2); margin: 0 0 14px; }
+
+/* token gate */
+.apz-token-prompt { margin: auto; text-align: center; padding: 32px; max-width: 340px; }
+.apz-token-prompt .apz-mark { width: 36px; height: 36px; border-radius: 11px; margin: 0 auto 16px; }
+.apz-token-prompt h1 { font-family: var(--sans); font-size: 17px; font-weight: 600; margin: 0 0 8px; }
+.apz-token-prompt p { font-size: 12px; color: var(--muted); margin: 0 0 16px; line-height: 1.55; }
+.apz-token-input { width: 100%; font-family: var(--mono); font-size: 13px; padding: 9px 11px; border: 1px solid var(--line-2); border-radius: 9px; background: var(--paper); color: var(--ink); outline: none; margin-bottom: 10px; }
+.apz-token-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
+
+/* status badge in setup check rows — a coloured glyph reads better than the
+   8px dot at a glance (red ✕ / amber ! / green ✓). */
+.apz-check-badge {
+  flex: none; width: 18px; height: 18px; border-radius: 50%; margin-top: 1px;
+  display: grid; place-items: center; font-family: var(--sans);
+  font-size: 11px; font-weight: 700; line-height: 1;
+}
+.apz-check-badge--ok   { background: var(--accent-tint); color: var(--accent-d); }
+.apz-check-badge--warn { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+.apz-check-badge--fail { background: var(--err-tint); color: var(--err); }
+.apz-setup-check--ok { opacity: .6; }
+
+/* ── standalone setup page (bare /tweaklet/?standalone=1 bootstrap) ─────────
+   No host app to float over → render the UI as a centered card on a neutral
+   backdrop instead of the edge launcher + slide-in dock. */
+.apz-standalone {
+  position: fixed; inset: 0; z-index: 2147483646;
+  display: flex; align-items: flex-start; justify-content: center;
+  overflow: auto; padding: clamp(16px, 6vh, 64px) 16px;
+  background:
+    radial-gradient(120% 80% at 50% -10%, #fffdf6 0%, rgba(255,253,246,0) 60%),
+    var(--surface-2);
+  font-family: var(--sans); color: var(--ink);
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+}
+.apz-standalone-card {
+  width: 100%; max-width: 540px;
+  background: var(--paper);
+  border: 1px solid var(--line); border-radius: var(--r);
+  box-shadow: var(--shadow); overflow: hidden;
+}
+/* Inside the card, the setup/token/loading views size to content, not 100vh. */
+.apz-standalone-card .apz,
+.apz-standalone-card .apz-setup { height: auto; min-height: 300px; }
+.apz-standalone-card .apz-setup { max-height: none; }

@@ -1,0 +1,53 @@
+{
+  "name": "@tweaklet/server",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Everyone is a builder now — an embedded AI panel that lets any teammate change the live app and ship it as a PR.",
+  "license": "MIT",
+  "author": "Joseph Chereshnovsky <jchereshnovsky@transcenda.com> (Transcenda)",
+  "homepage": "https://github.com/Transcenda/Tweaklet",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Transcenda/Tweaklet.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Transcenda/Tweaklet/issues"
+  },
+  "keywords": [
+    "ai-agent",
+    "mcp",
+    "opencode",
+    "developer-tools",
+    "self-hosted"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "tweaklet": "./dist/index.js"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "tsc -p tsconfig.json",
+    "build:web": "npm --prefix web install && npm --prefix web run build",
+    "build:all": "npm run build && npm run build:web",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@opencode-ai/sdk": "^1.17.7",
+    "express": "^4.19.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.0",
+    "@types/supertest": "^6.0.2",
+    "supertest": "^7.0.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
