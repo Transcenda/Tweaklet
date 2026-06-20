@@ -4,7 +4,7 @@
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)
 
-**Everyone is a builder now — an embedded AI panel that lets any teammate change the live app and ship it as a PR.**
+**Everyone is a builder now — describe a change, see it in the running app, and ship it as a PR.**
 
 Tweaklet gives product managers, designers, QA engineers, founders, and other non-technical team members a simple way to propose UI changes directly inside the product they are using.
 
@@ -18,7 +18,7 @@ Tweaklet is not trying to replace engineering. It gives the rest of the team a s
 
 Tweaklet is an embeddable AI widget that opens as an expandable panel inside your application.
 
-Users can select parts of the UI, describe what they want to change, and let the backend AI agent generate proposed updates.
+Users can select parts of the UI, describe what they want to change, and let the AI agent generate proposed updates.
 
 Example prompts:
 
@@ -29,7 +29,7 @@ Change this empty state copy to sound less technical and add a secondary action.
 Make this form more compact, but keep all validation messages visible.
 ```
 
-Under the hood, Tweaklet connects the user's request with your agent backend, repository, design rules, product context, and engineering guardrails.
+Under the hood, Tweaklet runs the user's request through your repository, design rules, product context, and engineering guardrails.
 
 ## Why Tweaklet?
 
@@ -61,7 +61,7 @@ Non-technical users get a simple interface ("Make this screen easier to understa
 
 1. **Embed the widget** — a lightweight frontend widget dropped into any app (React, Vue, Angular, Next.js, Rails, Django, Laravel, static HTML, internal tools, admin panels, SaaS, enterprise apps).
 2. **Capture UI context** — current route, selected element, DOM metadata, screenshot/visual state, component hints, user role, environment, viewport, design tokens, product instructions. Exactly what's captured is configurable by the engineering team.
-3. **Send the request to the agent backend** — which owns auth, authorization, rate limits, prompt construction, guardrails, codebase access, sandbox execution, agent orchestration, logging/audit, preview generation, and PR/ticket creation.
+3. **Send the request to the Tweaklet server** — which owns auth, authorization, rate limits, prompt construction, guardrails, codebase access, sandbox execution, agent orchestration, logging/audit, preview generation, and PR/ticket creation.
 4. **Generate a proposed change** — UI copy, CSS, component layout, design-system-aligned changes, accessibility/responsive fixes, frontend component updates, tests when needed, and PRs/patches/notes.
 5. **Review before shipping** — `Prompt → Proposed patch → Preview → Review → Pull Request → CI → Merge → Deploy`. For production SaaS, keep human review in the loop.
 
@@ -71,7 +71,7 @@ Non-technical users get a simple interface ("Make this screen easier to understa
 - Not a replacement for designers or engineers.
 - Not a no-code platform.
 
-It is an embedded product-iteration interface connected to your own agent backend.
+It is an embedded product-iteration interface backed by your own self-hosted agent and infrastructure.
 
 ## Guardrails
 
@@ -95,7 +95,7 @@ Tweaklet.init({
 
 Tweaklet is currently an experimental product concept. The initial goal is to validate the core workflow:
 
-`Any app → Embedded panel → Natural-language UI request → Agent backend → Proposed change`
+`Any app → Embedded panel → Natural-language UI request → Tweaklet server → Proposed change`
 
 ---
 
@@ -150,7 +150,7 @@ Branches are `<branchPrefix><slug-of-request>` (e.g. `tweaklet/make-header-bigge
 ### Development
 
 ```bash
-npm test                  # backend unit tests
+npm test                  # server unit tests
 npm --prefix web test     # web unit tests
 ```
 
