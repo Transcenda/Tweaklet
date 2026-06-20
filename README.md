@@ -6,105 +6,49 @@
 
 **Everyone is a builder now — describe a change for an AI agent, see it instantly in the running app, and ship it as a PR.**
 
-Tweaklet is an AI panel that lives inside your app. Point at something, say what you want changed, watch it happen in the running app — then ship it as a pull request.
-
-Engineers build the harness — the repo, the agent, the guardrails, the review flow. Everyone else builds on top of it.
-
----
-
-## What is Tweaklet?
-
-Tweaklet is a widget that embeds in your app and opens as a panel. Pick a part of the UI, describe the change in plain words, and the AI agent proposes the edit.
-
-Example prompts:
+Tweaklet is an AI panel that lives inside your app. Point at something, say what you want changed in plain words, and watch it happen in the running app — then ship it as a pull request. Engineers build the harness — the repo, the agent, the guardrails, the review flow — and everyone else builds on top of it.
 
 ```text
-Make this button match the primary CTA style from the checkout page.
-Move this filter above the table and make the layout work better on mobile.
-Change this empty state copy to sound less technical and add a secondary action.
-Make this form more compact, but keep all validation messages visible.
+Make this button match the primary CTA from the checkout page.
+Move this filter above the table and make it work on mobile.
+Rewrite this empty state to sound less technical, and add a secondary action.
 ```
 
-Every request runs through your repository, your design rules, and your guardrails — the agent works inside them, never around them.
+## Why
 
-## Why Tweaklet?
+The smallest changes wait the longest. A copy fix, a spacing tweak, a tooltip — minutes of real work, stuck in a queue behind everything bigger, handed from product to design to QA to engineering until someone finally has time.
 
-The smallest changes wait the longest. A copy fix, a spacing tweak, a tooltip — minutes of real work, stuck in a queue behind everything bigger, passed between product, design, QA, and engineering until someone has time.
-
-Tweaklet skips the queue. The person who spots the change makes it — describe it, see it in the running app, iterate until it's right — and ships it as a PR. No handoff. The same quality gates your team already trusts.
-
-## Who is it for?
+Tweaklet skips the queue. The person who spots the change makes it — describes it, sees it in the running app, iterates until it's right — and ships it as a PR through the same quality gates your team already trusts.
 
 - **Product managers** — ship the small improvements you'd normally write a ticket for.
 - **Designers** — refine the real UI, not just the mockup.
 - **QA** — fix the broken state you found, with full page context.
 - **Founders & stakeholders** — try copy, layout, and UX ideas without pulling engineers off their work.
-- **Engineers** — give the team a safe way to contribute, and keep control of the architecture, code quality, and release flow.
-
-## Core idea
-
-Tweaklet splits **who asks for a change** from **who sets the rules for making it**.
-
-Anyone can ask, in plain words. Engineers set the rules once: which files the agent may touch, which components can change, which design-system and API/data limits apply, which environments it runs in, and whether a change becomes a preview, a PR, or a ticket — and what needs a human to approve.
+- **Engineers** — give the team a safe way to contribute, and keep control of architecture, code quality, and releases.
 
 ## How it works
 
-1. **Embed the widget** — one script tag, into any app (React, Vue, Angular, Next.js, Rails, Django, Laravel, static HTML, internal tools, admin panels).
-2. **Capture context** — the route, the selected element, the DOM, a screenshot, the user's role, the environment, your design tokens. You decide what's captured.
-3. **Run it through the Tweaklet server** — auth, guardrails, the repo, sandboxed agent execution, logging, preview, and PR/ticket creation all live here.
-4. **Propose the change** — copy, CSS, layout, design-system-aligned edits, accessibility and responsive fixes, frontend components, and tests when they're needed.
-5. **Review before it ships** — `Prompt → Patch → Preview → Review → PR → CI → Merge → Deploy`. Keep a human in the loop for production.
+`Any app → embedded panel → plain-English request → Tweaklet server → proposed change → PR`
 
-## What Tweaklet is not
+1. **Embed the widget** — one script tag, in any app (React, Vue, Angular, Next.js, Rails, Django, static HTML, internal tools).
+2. **Ask in plain words**, pointing at the part of the UI you mean. Tweaklet captures the context — route, element, DOM, screenshot, design tokens — and you decide how much.
+3. **It runs on your server** — auth, guardrails, your repo, and sandboxed agent execution all live on the Tweaklet server you host, so changes never leave your infrastructure.
+4. **Review before it ships** — `Prompt → Patch → Preview → Review → PR → CI → Merge`. A human stays in the loop for production.
 
-- Not a generic chatbot.
-- Not a replacement for designers or engineers.
-- Not a no-code platform.
-
-It's a focused way to make product changes in context — running on your own infrastructure, under your rules.
-
-## Guardrails
-
-Tweaklet runs on tight guardrails: preview-only or write modes, file/component/route allowlists, design-token-only changes, no API/DB/dependency edits, no production deploys, required engineer approval, required CI, required visual-regression checks. You choose which apply.
-
-## Example usage
-
-```js
-import { Tweaklet } from "@tweaklet/widget";
-
-Tweaklet.init({
-  appId: "my-product",
-  environment: "staging",
-  apiUrl: "https://tweaklet.example.com/api",
-  user: { id: "user_123", role: "product_manager" },
-  context: { route: window.location.pathname, captureDom: true, captureScreenshot: true },
-});
-```
-
-## Status
-
-Tweaklet is early and moving fast. The core loop works:
-
-`Any app → Embedded panel → Plain-English request → Tweaklet server → Proposed change → PR`
-
----
+Early and moving fast — but the core loop works today.
 
 ## Getting started
 
 See **[docs/INSTALL.md](docs/INSTALL.md)** for the full bootstrap, reverse-proxy snippets (Caddy / nginx), and Vertex AI setup.
 
-Short version:
-
 ```bash
 npm i -g https://github.com/Transcenda/Tweaklet/releases/latest/download/tweaklet-server.tgz
 tweaklet serve                                      # default port 4319
-# …or from a clone:
-npm install && npm run build:all && node dist/index.js serve
 ```
 
-On first start the server prints a **setup token**. Expose `/tweaklet/*` via your reverse proxy, then open `https://<your-host>/tweaklet/` in a browser and enter the token — the Setup Wizard guides the rest (GitHub OAuth, Vertex, repo clone, guardrails).
+Expose `/tweaklet/*` through your reverse proxy and open `https://<your-host>/tweaklet/` — the Setup Wizard handles GitHub OAuth, Vertex, and the repo. On a dev machine that already has `git`, `opencode`, `gcloud` ADC, and `gh`, `tweaklet serve` auto-detects everything and starts with no config at all.
 
-### Embed the widget in your app
+### Embed the widget
 
 Add one `<script>` tag to your app's global entry document — the same way you'd add Google Analytics:
 
@@ -113,31 +57,20 @@ Add one `<script>` tag to your app's global entry document — the same way you'
 <script src="/tweaklet/widget.js"></script>
 ```
 
-The widget derives its server base from its own `src` at runtime (no build-time config). Your reverse proxy must forward `/tweaklet/*` to the Tweaklet server so the widget shares the same origin as your app.
+The widget derives its server base from its own `src` at runtime; your reverse proxy just needs to forward `/tweaklet/*` to the Tweaklet server so the widget shares your app's origin.
 
-**Dev-only gating (recommended):** Load the widget in development but not production. The Vite snippet below defaults to `/tweaklet` in dev and loads nothing in a production build — no `.env` file needed:
+**Dev-only gating (Vite)** — load it in development, never in a production build, with no `.env` file:
 
 ```html
 <script type="module">
-  // Dev: load same-origin from /tweaklet. Production build: off.
   const url = import.meta.env.VITE_TWEAKLET_URL || (import.meta.env.DEV ? "/tweaklet" : "");
   if (url) { const s = document.createElement("script"); s.src = url + "/widget.js"; s.async = true; document.body.appendChild(s); }
 </script>
 ```
 
-For `/tweaklet` to be same-origin in dev, proxy it to the Tweaklet server from your dev server (in `vite.config.ts`, `server.proxy`: `"/tweaklet": "http://127.0.0.1:4319"`). `VITE_TWEAKLET_URL` is an optional override. For Next.js gate on `process.env.NEXT_PUBLIC_TWEAKLET_URL`. Full framework-by-framework details are in **[docs/INSTALL.md](docs/INSTALL.md)**.
+Proxy `/tweaklet` to the server in dev (`vite.config.ts` → `server.proxy`: `"/tweaklet": "http://127.0.0.1:4319"`). For Next.js, gate on `process.env.NEXT_PUBLIC_TWEAKLET_URL`. Per-framework details — plus an `install-tweaklet-widget` skill for Claude Code that wires this up for you — are in **[docs/INSTALL.md](docs/INSTALL.md)**.
 
-**Claude Code users:** run the `install-tweaklet-widget` skill to automate this — Claude finds your entry document and inserts the snippet with per-environment gating.
-
-### Branch naming
-
-Tweaklet creates one feature branch per change, named from a convention you control in `~/.tweaklet/config.json`:
-
-    "repo": { "branchPrefix": "tweaklet/", ... }
-
-Branches are `<branchPrefix><slug-of-request>` (e.g. `tweaklet/make-header-bigger`). Set `branchPrefix` to match your team's convention (`tweaklet/`, `feature/`, `proposals/`, …). Non-technical users never name or pick branches — they Start a change, Save points (with a navigable history), and Submit for review.
-
-### Development
+## Development
 
 ```bash
 npm test                  # server unit tests
@@ -146,9 +79,7 @@ npm --prefix web test     # web unit tests
 
 ## Contributing
 
-Contributions are welcome — see **[CONTRIBUTING.md](CONTRIBUTING.md)** to get set up,
-run the tests, and open a PR. Found a security issue? Please follow
-**[SECURITY.md](SECURITY.md)** (don't open a public issue).
+Contributions are welcome — see **[CONTRIBUTING.md](CONTRIBUTING.md)**. Found a security issue? Please follow **[SECURITY.md](SECURITY.md)** (don't open a public issue).
 
 ## License
 

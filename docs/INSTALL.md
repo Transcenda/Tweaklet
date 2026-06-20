@@ -138,3 +138,11 @@ Once the operator has completed the wizard, end-users interact entirely through 
 ## Changing the base path
 
 The default is `/tweaklet`. To use a different prefix set `server.basePath` in `~/.tweaklet/config.json` and update your reverse-proxy rule to match.
+
+## Branch naming
+
+Tweaklet creates one feature branch per change, named from a convention you control in `~/.tweaklet/config.json`:
+
+    "repo": { "branchPrefix": "tweaklet/", ... }
+
+Branches are `<branchPrefix><slug-of-request>` (e.g. `tweaklet/make-header-bigger`). Set `branchPrefix` to match your team's convention (`tweaklet/`, `feature/`, `proposals/`, …). Non-technical users never name or pick branches — they start a change, save points along the way, and submit for review.
