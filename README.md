@@ -43,17 +43,17 @@ Tweaklet skips the queue. The person who spots the change makes it — describe 
 
 ## Core idea
 
-Tweaklet separates **who can suggest changes** from **who controls how changes are implemented**.
+Tweaklet splits **who asks for a change** from **who sets the rules for making it**.
 
-Non-technical users get a simple interface ("Make this screen easier to understand"). Engineers define the real operating boundaries: which files the agent can edit, which components can change, which design-system rules apply, which APIs/data models are allowed, which environments are used, and whether changes become previews, patches, pull requests, or tickets — and what requires human approval.
+Anyone can ask, in plain words. Engineers set the rules once: which files the agent may touch, which components can change, which design-system and API/data limits apply, which environments it runs in, and whether a change becomes a preview, a PR, or a ticket — and what needs a human to approve.
 
 ## How it works
 
-1. **Embed the widget** — a lightweight frontend widget dropped into any app (React, Vue, Angular, Next.js, Rails, Django, Laravel, static HTML, internal tools, admin panels, SaaS, enterprise apps).
-2. **Capture UI context** — current route, selected element, DOM metadata, screenshot/visual state, component hints, user role, environment, viewport, design tokens, product instructions. Exactly what's captured is configurable by the engineering team.
-3. **Send the request to the Tweaklet server** — which owns auth, authorization, rate limits, prompt construction, guardrails, codebase access, sandbox execution, agent orchestration, logging/audit, preview generation, and PR/ticket creation.
-4. **Generate a proposed change** — UI copy, CSS, component layout, design-system-aligned changes, accessibility/responsive fixes, frontend component updates, tests when needed, and PRs/patches/notes.
-5. **Review before shipping** — `Prompt → Proposed patch → Preview → Review → Pull Request → CI → Merge → Deploy`. For production SaaS, keep human review in the loop.
+1. **Embed the widget** — one script tag, into any app (React, Vue, Angular, Next.js, Rails, Django, Laravel, static HTML, internal tools, admin panels).
+2. **Capture context** — the route, the selected element, the DOM, a screenshot, the user's role, the environment, your design tokens. You decide what's captured.
+3. **Run it through the Tweaklet server** — auth, guardrails, the repo, sandboxed agent execution, logging, preview, and PR/ticket creation all live here.
+4. **Propose the change** — copy, CSS, layout, design-system-aligned edits, accessibility and responsive fixes, frontend components, and tests when they're needed.
+5. **Review before it ships** — `Prompt → Patch → Preview → Review → PR → CI → Merge → Deploy`. Keep a human in the loop for production.
 
 ## What Tweaklet is not
 
@@ -61,11 +61,11 @@ Non-technical users get a simple interface ("Make this screen easier to understa
 - Not a replacement for designers or engineers.
 - Not a no-code platform.
 
-It is an embedded product-iteration interface backed by your own self-hosted agent and infrastructure.
+It's a focused way to make product changes in context — running on your own infrastructure, under your rules.
 
 ## Guardrails
 
-Tweaklet is designed to work with strict guardrails: read-only / preview-only modes, component/file/route allowlists, design-token-only changes, no API/DB/dependency changes, no production deployment, required engineer approval, required CI pass, required visual-regression check.
+Tweaklet runs on tight guardrails: preview-only or write modes, file/component/route allowlists, design-token-only changes, no API/DB/dependency edits, no production deploys, required engineer approval, required CI, required visual-regression checks. You choose which apply.
 
 ## Example usage
 
@@ -83,9 +83,9 @@ Tweaklet.init({
 
 ## Status
 
-Tweaklet is currently an experimental product concept. The initial goal is to validate the core workflow:
+Tweaklet is early and moving fast. The core loop works:
 
-`Any app → Embedded panel → Natural-language UI request → Tweaklet server → Proposed change`
+`Any app → Embedded panel → Plain-English request → Tweaklet server → Proposed change → PR`
 
 ---
 
