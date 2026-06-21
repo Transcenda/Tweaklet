@@ -25,8 +25,6 @@ Tweaklet skips the queue. The person who spots the change makes it — describes
 3. **It runs on your server** — auth, guardrails, your repo, and sandboxed agent execution all live on the Tweaklet server you host, so changes never leave your infrastructure.
 4. **Review before it ships** — `Prompt → Patch → Preview → Review → PR → CI → Merge`. A human stays in the loop for production.
 
-Early and moving fast — but the core loop works today.
-
 ## Getting started
 
 See **[docs/INSTALL.md](docs/INSTALL.md)** for the full bootstrap, reverse-proxy snippets (Caddy / nginx), and Vertex AI setup.
