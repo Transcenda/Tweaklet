@@ -4,17 +4,9 @@
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)
 
-**Everyone is a builder now — describe a change for an AI agent, see it instantly in the running app, and ship it as a PR.**
+![Tweaklet: a dialog of small layout tweaks on a running app — each request shows the agent working, then the change lands live](docs/assets/demo.gif)
 
-Tweaklet is an AI panel that lives inside your app. Point at something, say what you want changed in plain words, and watch it happen in the running app — then ship it as a pull request. Engineers build the harness — the repo, the agent, the guardrails, the review flow — and everyone else builds on top of it.
-
-```text
-Make this button match the primary CTA from the checkout page.
-Move this filter above the table and make it work on mobile.
-Rewrite this empty state to sound less technical, and add a secondary action.
-```
-
-## Why
+*Describe a change in plain words, watch the agent work, and see it land live in the running app — then keep iterating.*
 
 The smallest changes wait the longest. A copy fix, a spacing tweak, a tooltip — minutes of real work, stuck in a queue behind everything bigger, handed from product to design to QA to engineering until someone finally has time.
 
@@ -25,12 +17,6 @@ Tweaklet skips the queue. The person who spots the change makes it — describes
 - **QA** — fix the broken state you found, with full page context.
 - **Founders & stakeholders** — try copy, layout, and UX ideas without pulling engineers off their work.
 - **Engineers** — give the team a safe way to contribute, and keep control of architecture, code quality, and releases.
-
-## How it works
-
-![Tweaklet: a dialog of small layout tweaks on a running app — each request shows the agent working, then the change lands live](docs/assets/demo.gif)
-
-*Describe a change in plain words, watch the agent work, and see it land live in the running app — then keep iterating.*
 
 `Any app → embedded panel → plain-English request → Tweaklet server → proposed change → PR`
 
