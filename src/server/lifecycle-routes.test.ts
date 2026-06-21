@@ -20,6 +20,7 @@ const cookie = `apz_session=${sign({ login: "alice", id: 7 }, config.server.sess
 
 const lifecycle = {
   startBranch: async (_cwd: string, o: any) => `tweaklet/${o.idea.toLowerCase().replace(/\W+/g, "-")}`,
+  syncIntoBranch: async () => ({ status: "up-to-date" as const }),
   currentBranch: async () => "sandbox/alice-bigger",
   checkpoint: async () => {},
   discard: async () => {},
@@ -57,14 +58,47 @@ async function signInAlice(appInstance: any): Promise<string> {
 
 describe("lifecycle endpoints", () => {
   it("all require auth", async () => {
-    for (const [m, p] of [["post", "/tweaklet/agent/idea"], ["post", "/tweaklet/agent/checkpoint"], ["post", "/tweaklet/agent/undo"], ["post", "/tweaklet/agent/refresh"], ["post", "/tweaklet/agent/pr"], ["get", "/tweaklet/agent/pr"], ["get", "/tweaklet/agent/state"]] as const) {
+    for (const [m, p] of [["post", "/tweaklet/agent/idea"], ["post", "/tweaklet/agent/sync"], ["post", "/tweaklet/agent/checkpoint"], ["post", "/tweaklet/agent/undo"], ["post", "/tweaklet/agent/refresh"], ["post", "/tweaklet/agent/pr"], ["get", "/tweaklet/agent/pr"], ["get", "/tweaklet/agent/state"]] as const) {
       await (request(app()) as any)[m](p).expect(401);
     }
   });
 
-  it("POST /tweaklet/agent/idea starts a branch named per convention", async () => {
-    const res = await request(app()).post("/tweaklet/agent/idea").set("Cookie", cookie).send({ idea: "Bigger" }).expect(200);
+  it("POST /tweaklet/agent/idea starts a branch named per convention, passing the user token", async () => {
+    let seenToken: string | undefined;
+    const a = app({ startBranch: async (_cwd: string, o: any) => { seenToken = o.token; return `tweaklet/${o.idea.toLowerCase().replace(/\W+/g, "-")}`; } });
+    const tok = await signInAlice(a); // populates tokenStore via the real OAuth callback
+    const res = await request(a).post("/tweaklet/agent/idea").set("Cookie", tok).send({ idea: "Bigger" }).expect(200);
     expect(res.body.branch).toBe("tweaklet/bigger");
+    expect(seenToken).toBe("t"); // the exchanged OAuth token (see app() stub)
+  });
+
+  it("POST /tweaklet/agent/idea works without a stored token (local/CLI auth), passing an empty token", async () => {
+    // Starting a change must not require an OAuth token: syncBase is best-effort,
+    // so a signed-in user with no stored token (local/CLI auth) can still tweak.
+    let seenToken: string | undefined;
+    const a = app({ startBranch: async (_cwd: string, o: any) => { seenToken = o.token; return `tweaklet/${o.idea.toLowerCase().replace(/\W+/g, "-")}`; } });
+    const res = await request(a).post("/tweaklet/agent/idea").set("Cookie", cookie).send({ idea: "x" }).expect(200);
+    expect(res.body.branch).toBe("tweaklet/x");
+    expect(seenToken).toBe("");
+  });
+
+  it("POST /tweaklet/agent/sync calls syncIntoBranch with base+token and returns its result", async () => {
+    let args: any;
+    const a = app({ syncIntoBranch: async (cwd: string, base: string, token: string) => { args = { cwd, base, token }; return { status: "conflict", conflicts: ["src/x.ts"] }; } });
+    const tok = await signInAlice(a);
+    const res = await request(a).post("/tweaklet/agent/sync").set("Cookie", tok).send().expect(200);
+    expect(res.body).toEqual({ status: "conflict", conflicts: ["src/x.ts"] });
+    expect(args).toEqual({ cwd: "/repo", base: "main", token: "t" });
+  });
+
+  it("POST /tweaklet/agent/sync 401s when the user has no stored token", async () => {
+    await request(app()).post("/tweaklet/agent/sync").set("Cookie", cookie).send().expect(401);
+  });
+
+  it("POST /tweaklet/agent/sync 400s when no repo is configured", async () => {
+    const noRepo = createServer({ ...config, repo: undefined }, { exchangeCodeForToken: async () => "t", fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }), lifecycle, sessionStore: noopStore() } as any);
+    const tok = await signInAlice(noRepo);
+    await request(noRepo).post("/tweaklet/agent/sync").set("Cookie", tok).send().expect(400);
   });
 
   it("POST /tweaklet/agent/checkpoint and /tweaklet/agent/undo return 204", async () => {

@@ -1,12 +1,19 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { assertSafeRef } from "./validate.js";
+import { tokenGitEnv } from "./token-git.js";
 
 const pexec = promisify(execFile);
 
-async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await pexec("git", args, { cwd });
+/** Run git with an optional extra env (merged over process.env). Used for
+ *  authenticated remote operations via {@link tokenGitEnv}. */
+async function gitEnv(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
+  const { stdout } = await pexec("git", args, { cwd, env: env ? { ...process.env, ...env } : undefined });
   return stdout.trim();
+}
+
+async function git(cwd: string, args: string[]): Promise<string> {
+  return gitEnv(cwd, args);
 }
 
 export function slugify(s: string): string {
@@ -23,11 +30,80 @@ export async function currentBranch(cwd: string): Promise<string> {
   return git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
 }
 
+/**
+ * Best-effort refresh of the LOCAL base branch from origin, so a new change is
+ * cut from a fresh tree (the working clone otherwise drifts behind origin/main
+ * and inherits a stale base). Authenticated via {@link tokenGitEnv}.
+ *
+ * Intentionally NEVER throws: if origin is unreachable (offline / no remote /
+ * auth failure) we log a concise warning and return, letting the caller fall
+ * back to the (possibly stale) local base. Freshness is best-effort, not a hard
+ * dependency — failing here must not block starting a change.
+ */
+export async function syncBase(cwd: string, base: string, token: string): Promise<void> {
+  assertSafeRef(base, "base");
+  try {
+    await gitEnv(cwd, ["fetch", "origin", base], tokenGitEnv(token));
+    await git(cwd, ["checkout", base]);
+    await git(cwd, ["merge", "--ff-only", `origin/${base}`]);
+  } catch (e) {
+    process.stderr.write(`tweaklet: syncBase(${base}) skipped — ${String(e).split("\n")[0]}\n`);
+  }
+}
+
+export interface SyncResult {
+  status: "updated" | "up-to-date" | "dirty" | "conflict";
+  conflicts?: string[];
+}
+
+// TODO(branch-sync): two deliberate follow-ups, designed later, NOT built here:
+//   1. A periodic background timer that auto-syncs the active branch — needs an
+//      active-holder / whose-token model plus a dirty-tree policy before it's safe.
+//   2. Agent-assisted conflict resolution (prompting opencode to resolve). For now
+//      conflicts are surfaced verbatim as { status: "conflict", conflicts } and the
+//      tree is left clean; we never auto-resolve.
+/**
+ * Merge the latest origin/<base> INTO the current feature branch, conflict-safe.
+ * - Refuses to run on a dirty tree (returns "dirty") so it can never merge over
+ *   uncommitted edits.
+ * - Returns "up-to-date" when origin/<base> is already an ancestor of HEAD.
+ * - On a clean merge, returns "updated".
+ * - On conflict, collects the conflicted paths, ABORTS the merge (never leaves a
+ *   partial/conflicted tree, never auto-resolves), and returns "conflict".
+ */
+export async function syncIntoBranch(cwd: string, base: string, token: string): Promise<SyncResult> {
+  if (await isDirty(cwd)) return { status: "dirty" };
+  assertSafeRef(base, "base");
+  await gitEnv(cwd, ["fetch", "origin", base], tokenGitEnv(token));
+  // Already contains origin/<base>? Nothing to merge.
+  try {
+    await git(cwd, ["merge-base", "--is-ancestor", `origin/${base}`, "HEAD"]);
+    return { status: "up-to-date" };
+  } catch {
+    // non-zero exit → not an ancestor → there is something to merge.
+  }
+  try {
+    await gitEnv(cwd, ["merge", "--no-edit", `origin/${base}`], tokenGitEnv(token));
+    return { status: "updated" };
+  } catch {
+    let conflicts: string[] = [];
+    try {
+      const out = await git(cwd, ["diff", "--name-only", "--diff-filter=U"]);
+      conflicts = out ? out.split("\n").filter(Boolean) : [];
+    } catch { /* fall through to abort regardless */ }
+    await git(cwd, ["merge", "--abort"]);
+    return { status: "conflict", conflicts };
+  }
+}
+
 export async function startBranch(
   cwd: string,
-  opts: { base: string; prefix: string; idea: string },
+  opts: { base: string; prefix: string; idea: string; token: string },
 ): Promise<string> {
   assertSafeRef(opts.base, "base");
+  // Refresh the local base from origin first (best-effort) so the new branch is
+  // cut from a fresh tree rather than a stale local base.
+  await syncBase(cwd, opts.base, opts.token);
   const branch = `${opts.prefix}${slugify(opts.idea)}`;
   await git(cwd, ["checkout", opts.base]);
   await git(cwd, ["checkout", "-B", branch]);

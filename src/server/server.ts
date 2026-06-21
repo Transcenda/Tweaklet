@@ -44,6 +44,7 @@ export interface ServerDeps {
   smokeTestAgent?: typeof realSmokeTestAgent;
   lifecycle?: {
     startBranch: typeof repoLib.startBranch;
+    syncIntoBranch: typeof repoLib.syncIntoBranch;
     currentBranch: typeof repoLib.currentBranch;
     checkpoint: typeof repoLib.checkpoint;
     discard: typeof repoLib.discard;
@@ -159,6 +160,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   let lastBranch: string | null = null;
   const lc = deps.lifecycle ?? {
     startBranch: repoLib.startBranch,
+    syncIntoBranch: repoLib.syncIntoBranch,
     currentBranch: repoLib.currentBranch,
     checkpoint: repoLib.checkpoint,
     discard: repoLib.discard,
@@ -644,9 +646,28 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       const idea = String(req.body?.idea ?? "").trim();
       if (!idea) { res.status(400).json({ error: "empty idea" }); return; }
       const user = currentUser(req)!;
-      const branch = await lc.startBranch(config.repo!.path!, { base: config.repo!.baseBranch, prefix: config.repo!.branchPrefix, idea });
+      // Pass the user's token IF we have one, so startBranch can refresh the base
+      // from origin (authenticated) before cutting the new branch — avoids
+      // stale-base drift. Without a token (local/CLI auth, no OAuth) syncBase is a
+      // best-effort no-op and the change starts from the local base, so starting a
+      // change must NOT require a token (only clone/PR, which truly hit GitHub, do).
+      const tok = currentToken(req);
+      const branch = await lc.startBranch(config.repo!.path!, { base: config.repo!.baseBranch, prefix: config.repo!.branchPrefix, idea, token: tok?.token ?? "" });
       sessions.delete(user.login); // a new idea starts a fresh opencode session (fresh memory)
       res.json({ branch });
+    } catch (e) { res.status(500).json({ error: String(e) }); }
+  });
+
+  // On-demand "sync with base": merge the latest origin/<base> INTO the current
+  // feature branch. Conflict-safe — see syncIntoBranch (dirty/up-to-date/updated/
+  // conflict; never leaves a conflicted tree, never auto-resolves).
+  router.post("/agent/sync", authGate, async (req, res) => {
+    if (!requireRepo(res)) return;
+    const tok = currentToken(req);
+    if (!tok) { res.status(401).json({ error: "sign in again" }); return; }
+    try {
+      const result = await lc.syncIntoBranch(config.repo!.path!, config.repo!.baseBranch, tok.token);
+      res.json(result);
     } catch (e) { res.status(500).json({ error: String(e) }); }
   });
 
