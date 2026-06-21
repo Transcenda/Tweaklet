@@ -70,16 +70,23 @@ describe("isStandalone", () => {
 });
 
 describe("mount", () => {
-  beforeEach(() => {
+  // The host now mounts on <html> (beside <body>) so the dock can shrink <body>,
+  // so cleaning body.innerHTML alone won't remove it — clear the <html>-level
+  // artifacts too, or they'd leak across tests.
+  function cleanup() {
     document.body.innerHTML = "";
+    document.getElementById("tweaklet-root")?.remove();
+    document.getElementById("tweaklet-dock-style")?.remove();
+    document.documentElement.classList.remove("tweaklet-docked");
+  }
+  beforeEach(() => {
+    cleanup();
     setBaseMock.mockClear();
     // App.checkState() runs on mount; resolve to the wizard (completed:false)
     // so the heavy Panel doesn't mount — the launcher renders in either mode.
     setupApiMock.state.mockResolvedValue({ completed: false, steps: [], firstIncompleteStepId: null, checks: [], allowlist: [] });
   });
-  afterEach(() => {
-    document.body.innerHTML = "";
-  });
+  afterEach(cleanup);
 
   it("attaches an open shadow root with the inlined style + the app", async () => {
     mount("https://host/tweaklet/widget.js");
@@ -113,6 +120,21 @@ describe("mount", () => {
     mount("https://host/tweaklet/widget.js");
     mount("https://host/tweaklet/widget.js");
     expect(document.querySelectorAll("#tweaklet-root").length).toBe(1);
+  });
+
+  it("mounts the host on <html> (beside <body>) and injects the dock stylesheet", () => {
+    mount("https://host/tweaklet/widget.js");
+    const root = document.getElementById("tweaklet-root")!;
+    expect(root.parentElement).toBe(document.documentElement);
+    const dock = document.getElementById("tweaklet-dock-style");
+    expect(dock).not.toBeNull();
+    expect(dock!.textContent).toContain("html.tweaklet-docked body");
+    expect(dock!.textContent).toContain("margin-right");
+  });
+
+  it("does not inject the dock stylesheet in standalone mode (no host app)", () => {
+    mount("https://host/tweaklet/widget.js?standalone=1");
+    expect(document.getElementById("tweaklet-dock-style")).toBeNull();
   });
 
   it("renders the centered card (not the launcher) in standalone mode", async () => {

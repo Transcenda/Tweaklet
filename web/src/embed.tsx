@@ -15,6 +15,12 @@ import { App } from "./App.js";
 import { setBase } from "./api.js";
 
 const ROOT_ID = "tweaklet-root";
+const DOCK_STYLE_ID = "tweaklet-dock-style";
+// Must stay in sync with .apz-dock width in panel.css.
+const DOCK_WIDTH = 400;
+// Below this host-viewport width the dock would crush the app, so the panel
+// falls back to an overlay (the stylesheet's media query turns off the shrink).
+const DOCK_MIN_VIEWPORT = 880;
 
 /**
  * Derive the widget base (origin + path prefix, no trailing slash) from the
@@ -61,9 +67,31 @@ export function mount(src: string): void {
   setBase(deriveBase(src));
   const standalone = isStandalone(src);
 
+  // Inject the dock stylesheet into the HOST document once. When <html> gets the
+  // `tweaklet-docked` class (App toggles it while the panel is open), <body>
+  // shrinks to the left and the panel fills the reserved right column. The
+  // transform makes <body> the containing block for its position:fixed
+  // descendants, so the app's fixed headers reflow into the narrower width
+  // instead of sliding under the panel. Disabled on narrow viewports.
+  if (!standalone && !document.getElementById(DOCK_STYLE_ID)) {
+    const dock = document.createElement("style");
+    dock.id = DOCK_STYLE_ID;
+    dock.textContent =
+      `html.tweaklet-docked body{margin-right:${DOCK_WIDTH}px!important;` +
+      `transform:translateZ(0);min-height:100vh;` +
+      `transition:margin-right .24s cubic-bezier(.2,.8,.2,1)}` +
+      `@media (max-width:${DOCK_MIN_VIEWPORT - 1}px){` +
+      `html.tweaklet-docked body{margin-right:0!important;transform:none}}`;
+    document.head.appendChild(dock);
+  }
+
   const host = document.createElement("div");
   host.id = ROOT_ID;
-  document.body.appendChild(host);
+  // Mount on <html>, not <body>: when docked, <body> gets a transform (so its
+  // fixed descendants reflow), which would otherwise trap the panel inside the
+  // shrunk app. As a sibling of <body> the panel stays viewport-fixed in the
+  // reserved right column.
+  document.documentElement.appendChild(host);
 
   const shadow = host.attachShadow({ mode: "open" });
 

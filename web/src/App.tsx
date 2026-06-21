@@ -37,6 +37,18 @@ export function App({ standalone = false }: AppProps = {}) {
 
   useEffect(() => { void checkState(); }, []);
 
+  // Dock mode: when the panel is open, mark the host <html> so the injected
+  // dock stylesheet (see embed.tsx) shrinks <body> to the left and reserves the
+  // right column for the panel — the app reflows beside it instead of being
+  // overlaid, so you can watch changes land while iterating. No-op in
+  // standalone (no host app), and the stylesheet itself disables the shrink on
+  // narrow viewports (the panel falls back to an overlay there).
+  useEffect(() => {
+    if (standalone) return;
+    document.documentElement.classList.toggle("tweaklet-docked", open);
+    return () => document.documentElement.classList.remove("tweaklet-docked");
+  }, [open, standalone]);
+
   function inner() {
     if (mode === "loading") {
       return (
