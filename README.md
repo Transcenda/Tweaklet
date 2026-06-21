@@ -4,10 +4,6 @@
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)
 
-![Tweaklet: a dialog of small layout tweaks on a running app — each request shows the agent working, then the change lands live](docs/assets/demo.gif)
-
-*Describe a change in plain words, watch the agent work, and see it land live in the running app — then keep iterating.*
-
 The smallest changes wait the longest. A copy fix, a spacing tweak, a tooltip — minutes of real work, stuck in a queue behind everything bigger, handed from product to design to QA to engineering until someone finally has time.
 
 Tweaklet skips the queue. The person who spots the change makes it — describes it, sees it in the running app, iterates until it's right — and ships it as a PR through the same quality gates your team already trusts.
@@ -17,6 +13,10 @@ Tweaklet skips the queue. The person who spots the change makes it — describes
 - **QA** — fix the broken state you found, with full page context.
 - **Founders & stakeholders** — try copy, layout, and UX ideas without pulling engineers off their work.
 - **Engineers** — give the team a safe way to contribute, and keep control of architecture, code quality, and releases.
+
+![Tweaklet: a dialog of small layout tweaks on a running app — each request shows the agent working, then the change lands live](docs/assets/demo.gif)
+
+*Describe a change in plain words, watch the agent work, and see it land live in the running app — then keep iterating.*
 
 `Any app → embedded panel → plain-English request → Tweaklet server → proposed change → PR`
 
