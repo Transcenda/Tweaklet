@@ -36,6 +36,9 @@ const { setupApiMock, apiMock, SetupAuthErrorMock, SETUP_TOKEN_KEY_VAL } = vi.ho
     repos: vi.fn(),
     clone: vi.fn(),
     history: vi.fn(),
+    branches: vi.fn(),
+    switchBranch: vi.fn(),
+    deleteBranch: vi.fn(),
   };
   const SETUP_TOKEN_KEY_VAL = "tweaklet.setupToken";
   return { setupApiMock, apiMock, SetupAuthErrorMock, SETUP_TOKEN_KEY_VAL };
@@ -93,6 +96,9 @@ beforeEach(() => {
   apiMock.clone.mockResolvedValue({ path: "/tmp/repo" });
   // Default: history resolves with empty events (no prior conversation).
   apiMock.history.mockResolvedValue({ events: [], sessionId: undefined });
+  apiMock.branches.mockResolvedValue({ base: "main", current: "main", branches: [] });
+  apiMock.switchBranch.mockResolvedValue({ branch: "main" });
+  apiMock.deleteBranch.mockResolvedValue(undefined);
   // Default: signIn resolves to signed-in
   authMock.signIn.mockResolvedValue("signed-in");
   // Default verify results for FinishStep

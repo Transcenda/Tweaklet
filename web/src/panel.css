@@ -378,6 +378,74 @@ button.apz-avatar:hover { border-color: var(--line-2); background: var(--surface
 .apz-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 9px 14px; border-bottom: 1px solid var(--line); background: var(--surface);
+  position: relative;
+}
+.apz-branch-dot--live { background: var(--surface); border: 2px solid var(--line-2); width: 9px; height: 9px; }
+
+/* ── change switcher ─────────────────────────────────── */
+.apz-switch {
+  display: flex; align-items: center; gap: 7px; min-width: 0; flex: 1 1 auto; max-width: 70%;
+  background: none; border: 1px solid transparent; border-radius: 8px; padding: 4px 8px 4px 6px;
+  margin-left: -6px; cursor: pointer; color: var(--ink); font: inherit; font-size: 12px; font-weight: 600;
+  transition: border-color .15s, background .15s;
+}
+.apz-switch:hover, .apz-switch[aria-expanded="true"] { border-color: var(--line); background: var(--surface-2); }
+.apz-switch--live { color: var(--ink-2); font-weight: 400; }
+.apz-switch-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.apz-switch-count {
+  flex: none; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  display: grid; place-items: center; font-size: 10.5px; font-weight: 600;
+  background: var(--accent-tint); color: var(--accent-d);
+}
+.apz-switch-caret { flex: none; color: var(--muted); font-size: 10px; }
+
+.apz-switcher {
+  position: absolute; top: calc(100% + 4px); left: 8px; right: 8px; z-index: 25;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm);
+  box-shadow: var(--shadow); padding: 5px; max-height: min(420px, 70vh); overflow: auto;
+  animation: apz-rise .18s ease both;
+}
+.apz-switcher-head {
+  padding: 10px 9px 6px; font-family: var(--sans); font-size: 10.5px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .05em; border-top: 1px solid var(--line); margin-top: 4px;
+}
+.apz-switcher-empty { padding: 4px 9px 10px; font-size: 12px; color: var(--muted); line-height: 1.45; }
+.apz-change-row { display: flex; align-items: center; border-radius: 7px; }
+.apz-change-row:hover { background: var(--surface-2); }
+.apz-change {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; text-align: left;
+  background: none; border: 0; border-radius: 7px; padding: 8px 9px; cursor: pointer; font: inherit; color: var(--ink);
+}
+.apz-change:disabled { cursor: default; }
+.apz-change--live:hover:not(:disabled) { background: var(--surface-2); }
+.apz-change-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; border: 2px solid var(--line-2); background: var(--surface); }
+.apz-change-dot--live { border-color: var(--line-2); }
+.apz-change-row.is-current .apz-change-dot, .apz-change.is-current .apz-change-dot { background: var(--accent); border-color: var(--accent); }
+.apz-change-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.apz-change-title { font-family: var(--sans); font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.apz-change-meta { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.apz-change-tag {
+  font-size: 10px; color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  border-radius: 6px; padding: 0 5px;
+}
+.apz-change-del {
+  flex: none; width: 26px; height: 26px; margin-right: 4px; border-radius: 6px; border: 1px solid transparent;
+  background: none; color: var(--muted); cursor: pointer; font-size: 11px; opacity: 0; transition: opacity .12s, color .12s, border-color .12s;
+}
+.apz-change-row:hover .apz-change-del, .apz-change-del:focus-visible { opacity: 1; }
+.apz-change-del:hover:not(:disabled) { color: var(--err); border-color: color-mix(in srgb, var(--err) 30%, transparent); background: var(--err-tint); }
+@media (hover: none) { .apz-change-del { opacity: 1; } }
+.apz-switcher-new {
+  width: 100%; margin-top: 4px; border: 1px dashed var(--line-2); border-radius: 7px; background: none;
+  padding: 8px; font: inherit; font-size: 12px; color: var(--accent-d); cursor: pointer;
+}
+.apz-switcher-new:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-tint); }
+
+.apz-reauth {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 14px; font-size: 12px; color: var(--ink);
+  background: color-mix(in srgb, var(--warn) 9%, var(--surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
 }
 .apz-branch { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink); font-weight: 600; }
 .apz-branch--main { color: var(--ink-2); font-weight: 400; }

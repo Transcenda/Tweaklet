@@ -1,4 +1,16 @@
-export interface User { login: string; id: number; }
+export interface User { login: string; id: number; needsReauth?: boolean; }
+
+export interface ChangeBranch { name: string; title: string; saves: number; updated: string; current: boolean; dirty: boolean; }
+export interface Branches { base: string; current: string; branches: ChangeBranch[]; }
+export interface StartedChange { branch: string; title: string; synced: boolean; }
+
+/** Surface the server's own error message ("the agent is still working…")
+ *  instead of a bare status code. */
+async function failure(path: string, res: Response): Promise<Error> {
+  let detail = "";
+  try { const j = await res.json(); detail = j?.detail ?? j?.error ?? ""; } catch { /* not JSON */ }
+  return new Error(detail || `${path} failed: ${res.status}`);
+}
 
 // The base path/origin the widget was loaded from. `embed.ts` derives it from
 // the <script src=".../widget.js"> URL at load and calls setBase() before the
@@ -15,13 +27,13 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
     credentials: "include",
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`${path} failed: ${res.status}`);
+  if (!res.ok) throw await failure(path, res);
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path, { credentials: "include" });
-  if (!res.ok) throw new Error(`${path} failed: ${res.status}`);
+  if (!res.ok) throw await failure(path, res);
   return (await res.json()) as T;
 }
 
@@ -32,7 +44,10 @@ export const api = {
     if (!res.ok) throw new Error(`/agent/me failed: ${res.status}`);
     return (await res.json()) as User;
   },
-  startIdea: (idea: string) => post<{ branch: string }>(`${getBase()}/agent/idea`, { idea }),
+  startIdea: (idea: string) => post<StartedChange>(`${getBase()}/agent/idea`, { idea }),
+  branches: () => get<Branches>(`${getBase()}/agent/branches`),
+  switchBranch: (branch: string) => post<{ branch: string }>(`${getBase()}/agent/branches/switch`, { branch }),
+  deleteBranch: (branch: string) => post<void>(`${getBase()}/agent/branches/delete`, { branch }),
   clone: (repoRef: string) => post<{ path: string }>(`${getBase()}/agent/clone`, { repoRef }),
   checkpoint: (message?: string) => post<void>(`${getBase()}/agent/checkpoint`, { message }),
   undo: () => post<void>(`${getBase()}/agent/undo`),
@@ -138,7 +153,8 @@ export async function streamPrompt(prompt: string, onEvent: (e: any) => void): P
     credentials: "include",
     body: JSON.stringify({ prompt }),
   });
-  if (!res.ok || !res.body) throw new Error(`/agent/prompt failed: ${res.status}`);
+  if (!res.ok) throw await failure("/agent/prompt", res);
+  if (!res.body) throw new Error("/agent/prompt failed: empty response");
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = "";
