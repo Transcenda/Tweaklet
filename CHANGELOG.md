@@ -28,7 +28,6 @@ tarball (`tweaklet-server.tgz`); install/upgrade with
   restart). Without the token it can't fetch the latest base or submit.
 - The ↩ recovery button now undoes unsaved edits instead of deleting the change.
 - `@opencode-ai/sdk` 1.18.34. Install `opencode-ai@1.18.34` on the host to match.
-- Design: [`docs/specs/2026-10-01-branch-workspace-design.md`](docs/specs/2026-10-01-branch-workspace-design.md).
 
 ## v0.0.4 — Branch-sync (2026-06-21)
 
