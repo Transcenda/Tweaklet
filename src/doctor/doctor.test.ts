@@ -146,11 +146,24 @@ describe("runDiagnostics", () => {
     expect(checks.find((c) => c.name === "panel")).toBeUndefined();
   });
 
-  it("node version check is ok on current Node (20+)", async () => {
-    const checks = await runDiagnostics(base, { exec: execOk(), pathExists: () => true, home: "/home/u", probeAgent: probeOk });
+  it("node version check is ok on the supported LTS (24+)", async () => {
+    const checks = await runDiagnostics(base, { exec: execOk(), pathExists: () => true, home: "/home/u", probeAgent: probeOk, nodeVersion: "v24.3.0" });
     const nodeCheck = checks.find((c) => c.name === "node version")!;
     expect(nodeCheck.status).toBe("ok");
     expect(nodeCheck.detail).toMatch(/✓/);
+  });
+
+  it("node version check fails below the supported LTS, with an upgrade hint", async () => {
+    const checks = await runDiagnostics(base, { exec: execOk(), pathExists: () => true, home: "/home/u", probeAgent: probeOk, nodeVersion: "v20.20.2" });
+    const nodeCheck = checks.find((c) => c.name === "node version")!;
+    expect(nodeCheck.status).toBe("fail");
+    expect(nodeCheck.detail).toMatch(/v24\+ .*v20\.20\.2/);
+    expect(nodeCheck.fix).toMatch(/LTS/);
+  });
+
+  it("node version check defaults to the running Node", async () => {
+    const checks = await runDiagnostics(base, { exec: execOk(), pathExists: () => true, home: "/home/u", probeAgent: probeOk });
+    expect(checks.find((c) => c.name === "node version")!.detail).toContain(process.version.split(".")[0]);
   });
 
   it("publicUrl reachable check warns when url is unreachable", async () => {

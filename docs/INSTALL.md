@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Node.js LTS (≥ 20)** — the only hard requirement to get the server running.
+- **Node.js, current LTS (≥ 24)** — the only hard requirement to get the server running. Older Node lines aren't supported (the doctor flags them).
 - `git` and `opencode` are needed for the full agent workflow; the in-browser Setup Wizard will guide you through installing and verifying each one after the server is up.
 - **No `gh` CLI required** — git operations (clone, commit, PR) are performed using each end-user's own GitHub OAuth token, not a shared operator credential.
 

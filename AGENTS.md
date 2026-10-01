@@ -52,7 +52,7 @@ a public issue.
 
 ## Project map
 
-- `src/`: `@tweaklet/server`, a Node ≥ 20 / Express / TypeScript (ESM) server.
+- `src/`: `@tweaklet/server`, a Node LTS (≥ 24) / Express / TypeScript (ESM) server. Only the current Node LTS line is supported.
   It handles auth, the opencode agent driver, the git change workspace, the
   live preview, the setup wizard API and diagnostics.
 - `web/`: the React + Vite widget, built as a single self-mounting

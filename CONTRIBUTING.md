@@ -17,7 +17,7 @@ Tweaklet is a small TypeScript monorepo:
 
 ## Getting set up
 
-Prerequisites: Node LTS (≥ 20), and [opencode](https://opencode.ai) on your `PATH`
+Prerequisites: the current Node LTS (≥ 24; older lines aren't supported), and [opencode](https://opencode.ai) on your `PATH`
 for running the agent locally.
 
 ```bash

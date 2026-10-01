@@ -28,9 +28,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 20 = the minimum in package.json "engines"; lts/* = latest LTS;
-        # latest = newest release. The aliases track new Node versions on their own.
-        node: ["20", "lts/*", "latest"]
+        # Supported: the current LTS only (package.json "engines"). `latest`
+        # gives early warning for the next line. Aliases track releases.
+        node: ["lts/*", "latest"]
     steps:
       - uses: actions/checkout@v4
         with:
