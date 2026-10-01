@@ -27,7 +27,8 @@ rules. They apply to commit messages and PR text as much as to files.
   tools, private repositories, customers, or the apps Tweaklet happens to be
   deployed on. Tweaklet must read as a general tool for *any* web app.
 - **Session artefacts:** implementation plans, agent transcripts, scratch notes,
-  local machine setup, screenshots of private apps.
+  local machine setup, and screenshots or recordings that show private data
+  (real records, credentials, internal URLs).
 
 ### Use neutral placeholders instead
 

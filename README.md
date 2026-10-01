@@ -15,6 +15,10 @@ Tweaklet skips the queue. The person who spots the change makes it — describes
 - **Founders & stakeholders** — try copy, layout, and UX ideas without pulling engineers off their work.
 - **Engineers** — give the team a safe way to contribute, and keep control of architecture, code quality, and releases.
 
+![Tweaklet: a dialog of small layout tweaks on a running app — each request shows the agent working, then the change lands live](docs/assets/demo.gif)
+
+*Describe a change in plain words, watch the agent work, and see it land live in the running app — then keep iterating.*
+
 `Any app → embedded panel → plain-English request → Tweaklet server → proposed change → PR`
 
 1. **Embed the widget** — one script tag, in any app (React, Vue, Angular, Next.js, Rails, Django, static HTML, internal tools).
