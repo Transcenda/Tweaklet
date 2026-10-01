@@ -28,7 +28,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ["20", "22"]
+        # 20 = the minimum in package.json "engines"; lts/* = latest LTS;
+        # latest = newest release. The aliases track new Node versions on their own.
+        node: ["20", "lts/*", "latest"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,10 +38,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+          check-latest: true
           cache: npm
           cache-dependency-path: |
             package-lock.json
             web/package-lock.json
+      - run: node --version
       # Git-level tests make commits in temporary repos.
       - run: git config --global user.name "CI" && git config --global user.email "ci@example.com" && git config --global init.defaultBranch main
       - run: npm ci --ignore-scripts
