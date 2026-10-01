@@ -45,6 +45,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm --prefix web ci
       - run: npm run typecheck
+      # Build first: the server tests serve the built widget bundle.
+      - run: npm run build:all
       - run: npm test -- --testTimeout=60000
       - run: npm --prefix web test
-      - run: npm run build:all
