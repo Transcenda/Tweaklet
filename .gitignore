@@ -10,6 +10,7 @@ web/dist/
 .env
 .env.*
 *.pem
+~/.tweaklet
 config.json
 
 # Logs

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Tweaklet's self-mounting Shadow-DOM widget + panel (React/Vite).",
   "license": "MIT",
-  "author": "Transcenda (https://github.com/Transcenda)",
+  "author": "Joseph Chereshnovsky <jchereshnovsky@transcenda.com> (Transcenda)",
   "homepage": "https://github.com/Transcenda/Tweaklet",
   "repository": {
     "type": "git",
