@@ -4,6 +4,32 @@ Notable changes to Tweaklet. Each version ships as a prebuilt GitHub Release
 tarball (`tweaklet-server.tgz`); install/upgrade with
 `npm i -g https://github.com/Transcenda/Tweaklet/releases/latest/download/tweaklet-server.tgz`.
 
+## v0.0.5 — Change workspace (2026-10-01)
+
+- **Every change runs on a fresh branch.** A prompt sent from the live app now
+  starts a new change automatically: Tweaklet fetches `origin/<base>`,
+  hard-resets the local base to it, discards stray edits there, and cuts a
+  uniquely named branch. Same-named ideas no longer overwrite each other. Any
+  commits that exist only on the local base are first moved to a "Recovered
+  work" change, so the reset can't destroy committed work.
+- **Change switcher.** The panel's top bar lists every change in progress, with
+  its saves, last update, an unsaved marker, and who started it. You can switch
+  in one click; each change keeps its own agent conversation. You can delete
+  your own changes and go back to the live app. Switching auto-saves unsaved
+  edits, bypassing repo hooks, and refuses rather than ever discarding work.
+- **Live preview self-heals.** It reinstalls deps when the lockfile changes,
+  restarts the dev server only when it's stopped, runs at `serve` start (so it
+  recovers after a reboot), and gets a doctor check of its own.
+- **Safety.** A single lock covers every working-tree operation. Prompts are
+  refused while previewing an earlier save. Saves never land on the base. Only
+  the owner can delete a change. `/agent/history` is bounded, so a stuck agent
+  can't hang the panel.
+- **Reconnect nudge** when the server has lost the GitHub token (e.g. after a
+  restart). Without the token it can't fetch the latest base or submit.
+- The ↩ recovery button now undoes unsaved edits instead of deleting the change.
+- `@opencode-ai/sdk` 1.18.34. Install `opencode-ai@1.18.34` on the host to match.
+- Design: [`docs/specs/2026-10-01-branch-workspace-design.md`](docs/specs/2026-10-01-branch-workspace-design.md).
+
 ## v0.0.4 — Branch-sync (2026-06-21)
 
 - **The working tree stays current with `main`.** Each change now branches off a
