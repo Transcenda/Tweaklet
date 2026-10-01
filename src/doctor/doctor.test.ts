@@ -165,6 +165,29 @@ describe("runDiagnostics", () => {
   });
 });
 
+describe("runDiagnostics — live preview", () => {
+  const withPreview: TweakletConfig = { ...base, preview: { serviceName: "app-dev", subdir: "frontend", installCheckDir: "frontend/node_modules" } };
+  const execWith = (active: boolean): Exec => async (cmd, args) =>
+    cmd === "systemctl" ? { code: active ? 0 : 3, stdout: "", stderr: "" } : { code: 0, stdout: "ok", stderr: "" };
+
+  it("is ok when the preview unit is running", async () => {
+    const checks = await runDiagnostics(withPreview, { exec: execWith(true), pathExists: () => true, home: "/h", probeAgent: probeOk });
+    expect(checks.find((c) => c.name === "live preview")).toMatchObject({ status: "ok", category: "system" });
+  });
+
+  it("fails with a fix when the preview unit is stopped", async () => {
+    const checks = await runDiagnostics(withPreview, { exec: execWith(false), pathExists: () => true, home: "/h", probeAgent: probeOk });
+    const c = checks.find((c) => c.name === "live preview")!;
+    expect(c.status).toBe("fail");
+    expect(c.commands).toEqual(["sudo systemctl enable --now app-dev"]);
+  });
+
+  it("is absent when no preview is configured", async () => {
+    const checks = await runDiagnostics(base, { exec: execWith(false), pathExists: () => true, home: "/h", probeAgent: probeOk });
+    expect(checks.find((c) => c.name === "live preview")).toBeUndefined();
+  });
+});
+
 describe("detectPackageManager", () => {
   // exec stub: report only the named binary as present (`command -v <bin>` → 0).
   const onlyHas = (present: string): Exec => async (_cmd, args) => {

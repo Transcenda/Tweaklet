@@ -280,6 +280,26 @@ export async function runDiagnostics(config: TweakletConfig, deps: DoctorDeps = 
     });
   }
 
+  // 8b. live preview dev server (SYSTEM) — only when a preview is configured.
+  //     A stopped unit is invisible otherwise: the reverse proxy silently fails
+  //     over to the static build, so edits never show and HMR is dead.
+  if (config.preview) {
+    const name = config.preview.serviceName;
+    const { code } = await exec("systemctl", ["is-active", "--quiet", name]);
+    if (code === 0) {
+      checks.push({ name: "live preview", status: "ok", detail: `${name} running`, category: "system" });
+    } else {
+      checks.push({
+        name: "live preview",
+        status: "fail",
+        detail: `${name} is not running — edits won't show live`,
+        fix: "Restart Tweaklet (it heals the preview on start) or start the unit.",
+        commands: [`sudo systemctl enable --now ${name}`],
+        category: "system",
+      });
+    }
+  }
+
   // 9. node version (SYSTEM)
   {
     const match = process.version.match(/^v(\d+)\.(\d+)/);

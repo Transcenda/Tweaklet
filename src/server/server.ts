@@ -54,6 +54,9 @@ export interface ServerDeps {
     previewCommit: typeof repoLib.previewCommit;
     exitPreview: typeof repoLib.exitPreview;
     restoreCommit: typeof repoLib.restoreCommit;
+    listBranches: typeof repoLib.listBranches;
+    switchBranch: typeof repoLib.switchBranch;
+    deleteBranch: typeof repoLib.deleteBranch;
     refresh: typeof realRefresh;
     createDraftPr: typeof prLib.createDraftPr;
     prStatus: typeof prLib.prStatus;
@@ -107,6 +110,15 @@ function isAllowed(user: { login?: string; id?: number }, config: TweakletConfig
   const loginOk = !!logins && !!user.login && logins.some((l) => l.toLowerCase() === user.login!.toLowerCase());
   const idOk = !!ids && typeof user.id === "number" && ids.includes(user.id);
   return loginOk || idOk;
+}
+
+/** A change title from a prompt: the panel prepends picked-element context
+ *  blocks separated by a blank line, so use the first line of the user's own
+ *  text (the last block). */
+export function titleFromPrompt(prompt: string): string {
+  const own = prompt.split(/\n\s*\n/).filter((b) => b.trim()).pop() ?? prompt;
+  const line = own.split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+  return line.slice(0, 80) || "New change";
 }
 
 function isLoopback(req: { ip?: string; socket?: { remoteAddress?: string } }): boolean {
@@ -170,6 +182,9 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     previewCommit: repoLib.previewCommit,
     exitPreview: repoLib.exitPreview,
     restoreCommit: repoLib.restoreCommit,
+    listBranches: repoLib.listBranches,
+    switchBranch: repoLib.switchBranch,
+    deleteBranch: repoLib.deleteBranch,
     refresh: realRefresh,
     createDraftPr: prLib.createDraftPr,
     prStatus: prLib.prStatus,
@@ -188,6 +203,32 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     if (!config.repo) { res.status(400).json({ error: "no repo configured" }); return false; }
     if (!config.repo.path) { res.status(409).json({ error: "no repo cloned yet" }); return false; }
     return true;
+  }
+  const branchOpts = () => ({ base: config.repo!.baseBranch, prefix: config.repo!.branchPrefix });
+  /** Who auto-saves are attributed to: the GitHub identity when we hold one. */
+  function authorFor(req: Request): repoLib.CommitAuthor {
+    const t = currentToken(req);
+    if (t) return { name: t.name, email: t.email };
+    const u = currentUser(req)!;
+    return { name: u.login, email: `${u.login}@users.noreply.github.com` };
+  }
+  /** opencode sessions are per user AND per change, so switching a change
+   *  restores its conversation and a new change starts with fresh memory. */
+  const keyFor = (login: string, branch: string) => `${login}@${branch}`;
+  async function sessionKey(login: string): Promise<string> {
+    if (!config.repo?.path) return login;
+    try { return keyFor(login, await lc.currentBranch(config.repo.path)); } catch { return login; }
+  }
+  /** Keep the live preview in step with the clone (deps + unit). Non-fatal. */
+  async function syncPreview(): Promise<void> {
+    if (!config.repo?.path) return;
+    try { await doEnsurePreview(config.repo.path, config.preview); }
+    catch (e) { console.warn("Tweaklet: live-preview refresh failed:", String(e)); }
+  }
+  /** Branch-moving operations must not race an agent run editing the tree. */
+  function refuseWhileRunning(res: Response): boolean {
+    if (agentRunning) { res.status(409).json({ error: "the agent is still working — stop it first" }); return true; }
+    return false;
   }
   const secret = config.server.sessionSecret;
   const basePath = config.server.basePath ?? "/tweaklet";
@@ -523,7 +564,11 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   });
 
   router.get("/agent/me", authGate, (req, res) => {
-    res.json(currentUser(req));
+    // needsReauth: OAuth is configured but this server no longer holds the
+    // user's token (tokens are memory-only, so any restart drops them). Without
+    // it we can't fetch the latest base or submit — the panel nudges a reconnect.
+    const needsReauth = !!config.github?.clientId && !currentToken(req);
+    res.json({ ...currentUser(req), needsReauth });
   });
 
   router.get("/agent/repos", authGate, (_req, res) => {
@@ -572,10 +617,20 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
         send({ type: "permission_ask", permissionID: r.permissionID, permission: r.permission, patterns: r.patterns, diff: r.diff } as any);
       });
     try {
+      // A prompt never runs on the base branch: start a fresh change (cut from
+      // the latest base) first, so every edit is isolated and reviewable.
+      if (config.repo?.path && (await lc.currentBranch(config.repo.path)) === config.repo.baseBranch) {
+        const started = await lc.startBranch(config.repo.path, { ...branchOpts(), idea: titleFromPrompt(prompt), token: currentToken(req)?.token ?? "", author: authorFor(req) });
+        sessions.delete(keyFor(user.login, started.branch));
+        previewing = null;
+        send({ type: "branch", ...started } as any);
+        await syncPreview();
+      }
+      const key = await sessionKey(user.login);
       const client = await getClient();
       const { sessionId, blocked } = await doRun({
         client,
-        sessionId: sessions.get(user.login),
+        sessionId: sessions.get(key),
         model: config.agent!.model!,
         prompt,
         allow: config.guardrails.allow,
@@ -583,7 +638,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
         onAsk,
         signal: currentAbort.signal,
       });
-      sessions.set(user.login, sessionId);
+      sessions.set(key, sessionId);
       if (blocked.length) send({ type: "guardrail", blocked, raw: {} } as any);
       send({ type: "end", code: 0 });
     } catch (e) {
@@ -651,10 +706,13 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       // stale-base drift. Without a token (local/CLI auth, no OAuth) syncBase is a
       // best-effort no-op and the change starts from the local base, so starting a
       // change must NOT require a token (only clone/PR, which truly hit GitHub, do).
+      if (refuseWhileRunning(res)) return;
       const tok = currentToken(req);
-      const branch = await lc.startBranch(config.repo!.path!, { base: config.repo!.baseBranch, prefix: config.repo!.branchPrefix, idea, token: tok?.token ?? "" });
-      sessions.delete(user.login); // a new idea starts a fresh opencode session (fresh memory)
-      res.json({ branch });
+      const started = await lc.startBranch(config.repo!.path!, { ...branchOpts(), idea, token: tok?.token ?? "", author: authorFor(req) });
+      sessions.delete(keyFor(user.login, started.branch)); // a new change starts with fresh memory
+      previewing = null;
+      await syncPreview();
+      res.json(started);
     } catch (e) { res.status(500).json({ error: String(e) }); }
   });
 
@@ -690,9 +748,11 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
 
   // Reject the agent's work entirely: discard all changes and return to the base
   // branch (drops the sandbox branch). Backs the panel's "Reject changes" button.
-  router.post("/agent/reject", authGate, async (_req, res) => {
+  router.post("/agent/reject", authGate, async (req, res) => {
     if (!requireRepo(res)) return;
+    if (refuseWhileRunning(res)) return;
     try {
+      sessions.delete(await sessionKey(currentUser(req)!.login));
       await lc.reject(config.repo!.path!, {
         base: config.repo!.prTarget,
         prefix: config.repo!.branchPrefix,
@@ -743,12 +803,54 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     } catch (e) { res.status(500).json({ error: String(e) }); }
   });
 
+  // ── Change workspace: list / switch / delete Tweaklet branches ─────────────
+  router.get("/agent/branches", authGate, async (_req, res) => {
+    if (!requireRepo(res)) return;
+    try {
+      const path = config.repo!.path!;
+      res.json({ base: config.repo!.baseBranch, current: await lc.currentBranch(path), branches: await lc.listBranches(path, branchOpts()) });
+    } catch (e) { res.status(500).json({ error: String(e) }); }
+  });
+
+  router.post("/agent/branches/switch", authGate, async (req, res) => {
+    if (!requireRepo(res)) return;
+    if (refuseWhileRunning(res)) return;
+    const branch = String(req.body?.branch ?? "");
+    if (!branch) { res.status(400).json({ error: "no branch" }); return; }
+    try {
+      await lc.switchBranch(config.repo!.path!, branch, { ...branchOpts(), author: authorFor(req) });
+      previewing = null;
+      await syncPreview();
+      res.json({ branch });
+    } catch (e) {
+      const msg = String(e);
+      res.status(/not a Tweaklet change|no such change|invalid branch/.test(msg) ? 400 : 500).json({ error: msg });
+    }
+  });
+
+  router.post("/agent/branches/delete", authGate, async (req, res) => {
+    if (!requireRepo(res)) return;
+    if (refuseWhileRunning(res)) return;
+    const branch = String(req.body?.branch ?? "");
+    if (!branch) { res.status(400).json({ error: "no branch" }); return; }
+    try {
+      await lc.deleteBranch(config.repo!.path!, branch, branchOpts());
+      sessions.delete(keyFor(currentUser(req)!.login, branch));
+      previewing = null;
+      await syncPreview();
+      res.status(204).end();
+    } catch (e) {
+      const msg = String(e);
+      res.status(/not a Tweaklet change|no such change|invalid branch/.test(msg) ? 400 : 500).json({ error: msg });
+    }
+  });
+
   // Re-hydrate the conversation after a panel reload/crash: look up the holder's
   // session id, fetch its messages from opencode, map to events. Best-effort —
   // never fail re-hydration (any fetch/mapping error → 200 with {events:[]}).
   router.get("/agent/history", authGate, async (req, res) => {
     const user = currentUser(req)!;
-    const sid = sessions.get(user.login);
+    const sid = sessions.get(await sessionKey(user.login));
     if (!sid) { res.json({ events: [] }); return; }
     try {
       const client = await getClient();
@@ -875,6 +977,13 @@ export function serve(config: TweakletConfig): void {
         `\nTweaklet setup token: ${setupToken}\n` +
         `  (enter it in the setup wizard to configure this server)\n`,
       );
+    }
+    // Self-heal the live preview on start (e.g. after a VM reboot left the dev
+    // server stopped, or the clone's deps drifted). Non-fatal.
+    if (config.repo?.path && config.preview) {
+      realEnsurePreview(config.repo.path, config.preview)
+        .then((r) => console.log(`Tweaklet: live preview ready (installed=${r.installed}, restarted=${r.restarted})`))
+        .catch((e) => console.warn("Tweaklet: live-preview start failed:", String(e)));
     }
     getServer(config.repo?.path)
       .then(() => console.log("Tweaklet: opencode server ready"))

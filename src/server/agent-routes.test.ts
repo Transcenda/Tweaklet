@@ -329,7 +329,7 @@ describe("POST /tweaklet/agent/clone", () => {
       ...configWithRepoAllowlist,
       preview: previewConfig,
     };
-    const ensurePreviewSpy = vi.fn(async () => ({ started: true }));
+    const ensurePreviewSpy = vi.fn(async () => ({ started: true, installed: false, restarted: true }));
     const app = createServer(configWithPreview, {
       exchangeCodeForToken: async () => "gho_tok",
       fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
@@ -372,5 +372,49 @@ describe("POST /tweaklet/agent/clone", () => {
       .expect(200);
     expect(res.body.path).toBe("/repo");
     expect(ensurePreviewSpy).toHaveBeenCalledOnce();
+  });
+});
+
+describe("POST /tweaklet/agent/prompt on the base branch", () => {
+  const withRepo: TweakletConfig = { ...base, repo: { path: "/repo", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: [] } };
+  function lifecycleOn(branch: { name: string }, started: any[]) {
+    return {
+      currentBranch: async () => branch.name,
+      startBranch: async (_cwd: string, o: any) => { started.push(o); branch.name = "tweaklet/new"; return { branch: "tweaklet/new", title: o.idea, synced: true }; },
+    } as any;
+  }
+
+  it("auto-starts a fresh change titled from the user's text before the agent runs", async () => {
+    const branch = { name: "main" }; const started: any[] = [];
+    let ranOn = "";
+    const runPrompt = async (a: any) => { ranOn = branch.name; return { sessionId: "s1", blocked: [] }; };
+    const res = await request(appWith({ runPrompt, lifecycle: lifecycleOn(branch, started) }, withRepo))
+      .post("/tweaklet/agent/prompt").set("Cookie", authCookie)
+      .send({ prompt: "Picked element: p.title\n\nChange the title to login" }).expect(200);
+    expect(started).toHaveLength(1);
+    expect(started[0]).toMatchObject({ base: "main", prefix: "tweaklet/", idea: "Change the title to login" });
+    expect(ranOn).toBe("tweaklet/new");
+    expect(res.text).toContain('"type":"branch"');
+    expect(res.text).toContain('"branch":"tweaklet/new"');
+  });
+
+  it("does not start a new change when already on one", async () => {
+    const branch = { name: "tweaklet/existing" }; const started: any[] = [];
+    await request(appWith({ lifecycle: lifecycleOn(branch, started) }, withRepo))
+      .post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "more" }).expect(200);
+    expect(started).toHaveLength(0);
+  });
+
+  it("keeps a separate conversation per change", async () => {
+    const branch = { name: "tweaklet/a" }; const seen: (string | undefined)[] = [];
+    let n = 0;
+    const runPrompt = async (a: any) => { seen.push(a.sessionId); return { sessionId: `sess-${++n}`, blocked: [] }; };
+    const app = appWith({ runPrompt, lifecycle: lifecycleOn(branch, []) }, withRepo);
+    await request(app).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "on a" }).expect(200);
+    branch.name = "tweaklet/b";
+    await request(app).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "on b" }).expect(200);
+    branch.name = "tweaklet/a";
+    await request(app).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "back on a" }).expect(200);
+    expect(seen).toEqual([undefined, undefined, "sess-1"]);
   });
 });

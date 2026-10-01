@@ -57,7 +57,7 @@ describe("server", () => {
   it("returns the user on /tweaklet/agent/me with a valid session cookie", async () => {
     const cookie = `apz_session=${sign({ login: "alice", id: 7 }, config.server.sessionSecret)}`;
     const res = await request(appWith()).get("/tweaklet/agent/me").set("Cookie", cookie).expect(200);
-    expect(res.body).toEqual({ login: "alice", id: 7 });
+    expect(res.body).toMatchObject({ login: "alice", id: 7 });
   });
 
   it("/tweaklet/auth/login redirects to GitHub with a state cookie", async () => {

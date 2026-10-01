@@ -96,21 +96,192 @@ export async function syncIntoBranch(cwd: string, base: string, token: string): 
   }
 }
 
-export async function startBranch(
-  cwd: string,
-  opts: { base: string; prefix: string; idea: string; token: string },
-): Promise<string> {
-  assertSafeRef(opts.base, "base");
-  // Refresh the local base from origin first (best-effort) so the new branch is
-  // cut from a fresh tree rather than a stale local base.
-  await syncBase(cwd, opts.base, opts.token);
-  const branch = `${opts.prefix}${slugify(opts.idea)}`;
-  await git(cwd, ["checkout", opts.base]);
-  await git(cwd, ["checkout", "-B", branch]);
-  return branch;
+export interface CommitAuthor { name: string; email: string; }
+
+/** Fallback identity for auto-saves when the holder has no GitHub identity
+ *  (local / CLI auth). Only used for WIP commits on a Tweaklet branch. */
+const AUTOSAVE_AUTHOR: CommitAuthor = { name: "Tweaklet", email: "tweaklet@localhost" };
+const AUTOSAVE_MESSAGE = "Work in progress (auto-saved)";
+
+/** Is `branch` a Tweaklet change branch (prefixed, never the base)? */
+function isChangeBranch(branch: string, o: { base: string; prefix: string }): boolean {
+  return !!o.prefix && branch !== o.base && branch.startsWith(o.prefix) && branch.length > o.prefix.length;
 }
 
-export interface CommitAuthor { name: string; email: string; }
+async function branchExists(cwd: string, branch: string): Promise<boolean> {
+  try { await git(cwd, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]); return true; }
+  catch { return false; }
+}
+
+/**
+ * Leave the working tree clean before moving HEAD, without ever losing work:
+ * on a change branch, unsaved edits are committed as a WIP save; anywhere else
+ * (the base, a detached preview) they are discarded — the base must stay
+ * pristine. Also clears a half-finished merge/rebase.
+ */
+async function settleTree(cwd: string, o: { base: string; prefix: string; author?: CommitAuthor }): Promise<void> {
+  for (const abort of [["merge", "--abort"], ["rebase", "--abort"], ["cherry-pick", "--abort"]]) {
+    try { await git(cwd, abort); } catch { /* nothing in progress */ }
+  }
+  const branch = await currentBranch(cwd);
+  if (isChangeBranch(branch, o) && await isDirty(cwd)) {
+    try {
+      await checkpoint(cwd, AUTOSAVE_MESSAGE, o.author ?? AUTOSAVE_AUTHOR);
+      return;
+    } catch { /* e.g. a conflicted index — fall through and discard */ }
+  }
+  await git(cwd, ["reset", "-q", "--hard", "HEAD"]);
+  await git(cwd, ["clean", "-fdq"]);
+}
+
+/** Fetch origin/<base>. Uses the holder's token when we have one, the host's
+ *  own git credentials otherwise; never prompts. Returns whether it worked. */
+async function fetchBase(cwd: string, base: string, token: string): Promise<boolean> {
+  const env = { ...(token ? tokenGitEnv(token) : {}), GIT_TERMINAL_PROMPT: "0" };
+  try {
+    await gitEnv(cwd, ["fetch", "--quiet", "origin", base], env);
+    return true;
+  } catch (e) {
+    process.stderr.write(`tweaklet: fetch origin/${base} failed — ${String(e).split("\n")[0]}\n`);
+    return false;
+  }
+}
+
+async function aheadOf(cwd: string, base: string, branch: string): Promise<number> {
+  return Number(await git(cwd, ["rev-list", "--count", `${base}..${branch}`])) || 0;
+}
+
+async function uniqueBranchName(cwd: string, wanted: string): Promise<string> {
+  if (!(await branchExists(cwd, wanted))) return wanted;
+  for (let i = 2; ; i++) {
+    const candidate = `${wanted}-${i}`;
+    if (!(await branchExists(cwd, candidate))) return candidate;
+  }
+}
+
+export interface StartResult {
+  branch: string;
+  title: string;
+  /** false when origin couldn't be fetched — the change was cut from the last-known base. */
+  synced: boolean;
+}
+
+/**
+ * Start a change on a FRESH branch cut from the latest base:
+ *  1. settle the current tree (auto-save a change's edits / discard stray base edits),
+ *  2. fetch origin/<base> and hard-reset the local base to it (drops any
+ *     local-only commits on the base — nothing is ever built on the base),
+ *  3. prune empty changes (no saves) so the list stays meaningful,
+ *  4. cut a uniquely-named branch (never clobbers an existing change) and
+ *     record the human title in `branch.<name>.description`.
+ * Never throws for an unreachable origin — reports `synced: false` instead.
+ */
+export async function startBranch(
+  cwd: string,
+  opts: { base: string; prefix: string; idea: string; token: string; author?: CommitAuthor },
+): Promise<StartResult> {
+  assertSafeRef(opts.base, "base");
+  await settleTree(cwd, opts);
+  const synced = await fetchBase(cwd, opts.base, opts.token);
+  if (synced) await git(cwd, ["checkout", "-q", "-B", opts.base, `origin/${opts.base}`]);
+  else await git(cwd, ["checkout", "-q", opts.base]);
+  await pruneEmptyBranches(cwd, opts);
+  // Leading dashes stripped so the title can never read as a `git config` flag.
+  const title = opts.idea.trim().replace(/\s+/g, " ").replace(/^-+\s*/, "").slice(0, 120) || "New change";
+  const branch = await uniqueBranchName(cwd, `${opts.prefix}${slugify(title)}`);
+  assertSafeRef(branch, "branch");
+  await git(cwd, ["checkout", "-q", "-b", branch]);
+  await git(cwd, ["config", `branch.${branch}.description`, title]);
+  return { branch, title, synced };
+}
+
+async function pruneEmptyBranches(cwd: string, o: { base: string; prefix: string }): Promise<void> {
+  const current = await currentBranch(cwd);
+  for (const name of await changeBranchNames(cwd, o)) {
+    if (name === current) continue;
+    if ((await aheadOf(cwd, o.base, name)) === 0) await git(cwd, ["branch", "-q", "-D", name]);
+  }
+}
+
+async function changeBranchNames(cwd: string, o: { base: string; prefix: string }): Promise<string[]> {
+  const out = await git(cwd, ["for-each-ref", "--format=%(refname:short)", "refs/heads/"]);
+  return out ? out.split("\n").filter((n) => isChangeBranch(n, o)) : [];
+}
+
+function humanize(branch: string, prefix: string): string {
+  const s = branch.slice(prefix.length).replace(/[-_]+/g, " ").trim();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : branch;
+}
+
+export interface ChangeBranch {
+  name: string;
+  title: string;
+  /** Saves = commits on the change beyond the base. */
+  saves: number;
+  /** Relative time of the last commit ("2 hours ago"). */
+  updated: string;
+  current: boolean;
+  /** Unsaved edits — only ever true for the current change. */
+  dirty: boolean;
+}
+
+/** Every Tweaklet change in the clone, most recently updated first. */
+export async function listBranches(cwd: string, o: { base: string; prefix: string }): Promise<ChangeBranch[]> {
+  assertSafeRef(o.base, "base");
+  const out = await git(cwd, ["for-each-ref", "--sort=-committerdate", "--format=%(refname:short)%1f%(committerdate:relative)", "refs/heads/"]);
+  const titles = new Map<string, string>();
+  try {
+    const cfg = await git(cwd, ["config", "--get-regexp", "^branch\\..*\\.description$"]);
+    for (const line of cfg.split("\n")) {
+      const m = line.match(/^branch\.(.+)\.description (.*)$/);
+      if (m) titles.set(m[1], m[2]);
+    }
+  } catch { /* no descriptions yet → exit 1 */ }
+  const current = await currentBranch(cwd);
+  const dirty = await isDirty(cwd);
+  const rows = out ? out.split("\n").map((l) => l.split("\x1f")) : [];
+  const result: ChangeBranch[] = [];
+  for (const [name, updated] of rows) {
+    if (!isChangeBranch(name, o)) continue;
+    result.push({
+      name,
+      title: titles.get(name) ?? humanize(name, o.prefix),
+      saves: await aheadOf(cwd, o.base, name),
+      updated,
+      current: name === current,
+      dirty: name === current && dirty,
+    });
+  }
+  return result;
+}
+
+/** Switch to another change (or the base). The current change's unsaved edits
+ *  are auto-saved first, so switching never loses work. */
+export async function switchBranch(
+  cwd: string,
+  branch: string,
+  o: { base: string; prefix: string; author?: CommitAuthor },
+): Promise<void> {
+  assertSafeRef(branch, "branch");
+  if (branch !== o.base && !isChangeBranch(branch, o)) throw new Error(`"${branch}" is not a Tweaklet change`);
+  if (!(await branchExists(cwd, branch))) throw new Error(`no such change: ${branch}`);
+  await settleTree(cwd, o);
+  await git(cwd, ["checkout", "-q", branch]);
+}
+
+/** Delete a change for good. Deleting the current change discards its edits
+ *  and returns to a clean base. Refuses the base and non-Tweaklet branches. */
+export async function deleteBranch(cwd: string, branch: string, o: { base: string; prefix: string }): Promise<void> {
+  assertSafeRef(branch, "branch");
+  if (!isChangeBranch(branch, o)) throw new Error(`"${branch}" is not a Tweaklet change`);
+  if (!(await branchExists(cwd, branch))) throw new Error(`no such change: ${branch}`);
+  if ((await currentBranch(cwd)) === branch) {
+    await git(cwd, ["reset", "-q", "--hard", "HEAD"]);
+    await git(cwd, ["clean", "-fdq"]);
+    await git(cwd, ["checkout", "-q", o.base]);
+  }
+  await git(cwd, ["branch", "-q", "-D", branch]);
+}
 
 export async function checkpoint(cwd: string, message: string, author: CommitAuthor): Promise<void> {
   await git(cwd, ["add", "-A"]);
