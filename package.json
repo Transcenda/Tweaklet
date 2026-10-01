@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "description": "Everyone is a builder now — describe a change for an AI agent, see it instantly in the running app, and ship it as a PR.",
   "license": "MIT",
-  "author": "Joseph Chereshnovsky <jchereshnovsky@transcenda.com> (Transcenda)",
+  "author": "Transcenda (https://github.com/Transcenda)",
   "homepage": "https://github.com/Transcenda/Tweaklet",
   "repository": {
     "type": "git",
@@ -38,6 +38,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check:public": "sh scripts/check-public.sh",
     "build": "tsc -p tsconfig.build.json",
     "build:web": "npm --prefix web install && npm --prefix web run build",
     "build:all": "npm run build && npm run build:web",

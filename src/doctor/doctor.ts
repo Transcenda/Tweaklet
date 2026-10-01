@@ -45,7 +45,7 @@ export interface DoctorDeps {
 /**
  * Default GCE metadata-server ADC probe: ask the metadata server for the
  * default service account token. Returns true only on a GCE VM whose SA can
- * mint tokens (key-less ADC — how opencode reaches Vertex on the dev server).
+ * mint tokens (key-less ADC — e.g. opencode reaching Vertex from a GCE VM).
  * Fails fast (1s) off-GCE.
  */
 const defaultGceMetadataAdc = async (): Promise<boolean> =>

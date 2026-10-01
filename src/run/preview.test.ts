@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { ensurePreview } from "./preview.js";
 
-const PREVIEW = { serviceName: "t8a-frontend-dev", subdir: "frontend", installCheckDir: "frontend/node_modules" };
+const PREVIEW = { serviceName: "webapp-dev", subdir: "frontend", installCheckDir: "frontend/node_modules" };
 const LOCK = "/repo/frontend/package-lock.json";
 const STAMP = "/repo/frontend/node_modules/.tweaklet-lock";
 
@@ -14,7 +14,7 @@ function fs(files: Record<string, string>, dirs: string[] = []) {
   };
 }
 const ok = () => vi.fn(async (_cmd: string, _args: string[], _o: { cwd?: string }) => ({ stdout: "", stderr: "" }));
-const restart = ["sudo", ["-n", "systemctl", "restart", "t8a-frontend-dev"], expect.anything()] as const;
+const restart = ["sudo", ["-n", "systemctl", "restart", "webapp-dev"], expect.anything()] as const;
 
 describe("ensurePreview", () => {
   it("no-op when preview is undefined", async () => {
@@ -49,7 +49,7 @@ describe("ensurePreview", () => {
     const exec = ok(); // `systemctl is-active` succeeds → running
     const f = fs({ [LOCK]: "lock-v1", [STAMP]: first.readFile(STAMP) }, ["/repo/frontend/node_modules"]);
     const r = await ensurePreview("/repo", PREVIEW, { exec, ...f });
-    expect(exec).toHaveBeenCalledWith("systemctl", ["is-active", "--quiet", "t8a-frontend-dev"], expect.anything());
+    expect(exec).toHaveBeenCalledWith("systemctl", ["is-active", "--quiet", "webapp-dev"], expect.anything());
     expect(exec).not.toHaveBeenCalledWith("npm", expect.anything(), expect.anything());
     expect(exec).not.toHaveBeenCalledWith(...restart);
     expect(r).toMatchObject({ started: true, installed: false, restarted: false });

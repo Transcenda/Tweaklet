@@ -64,14 +64,13 @@ tarball (`tweaklet-server.tgz`); install/upgrade with
 - Host-app embed: the dev loader defaults to `/tweaklet` (same-origin) via
   `import.meta.env.DEV` — **no `.env` file needed**; `VITE_TWEAKLET_URL` is only an
   override.
-- Design: [#1](https://github.com/Transcenda/Tweaklet/issues/1) and
-  [`docs/specs/2026-06-21-zero-config-dock-branch-sync-design.md`](docs/specs/2026-06-21-zero-config-dock-branch-sync-design.md).
+- Design: [#1](https://github.com/Transcenda/Tweaklet/issues/1).
 
 ## v0.0.1 — Initial open-source release (2026-06-20)
 
-- First public release as a standalone repo (previously developed inside the t8a
-  monorepo). Includes the self-mounting Shadow-DOM widget, the opencode-on-Vertex
-  agent, per-user GitHub OAuth, the change lifecycle (start → save points → submit
-  PR), the in-app live preview + DOM-inspect MCP + crash-safe recovery (the "closed
+- First public release as a standalone repo (previously developed privately).
+  Includes the self-mounting Shadow-DOM widget, the opencode-on-Vertex agent,
+  per-user GitHub OAuth, the change lifecycle (start → save points → submit PR),
+  the in-app live preview + DOM-inspect MCP + crash-safe recovery (the "closed
   loop"), and the in-browser setup wizard. Distributed as a prebuilt GitHub Release
   tarball — no npm registry account required.

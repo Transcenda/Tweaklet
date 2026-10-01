@@ -26,7 +26,7 @@ describe("createDraftPr (REST + token)", () => {
 
 describe("repoSlugFromRemote", () => {
   it("parses owner/name from the origin https url", async () => {
-    const exec = async () => ({ stdout: "https://github.com/transcenda/t8a\n", stderr: "", code: 0 });
-    expect(await repoSlugFromRemote("/cwd", exec)).toEqual({ owner: "transcenda", name: "t8a" });
+    const exec = async () => ({ stdout: "https://github.com/acme/webapp\n", stderr: "", code: 0 });
+    expect(await repoSlugFromRemote("/cwd", exec)).toEqual({ owner: "acme", name: "webapp" });
   });
 });

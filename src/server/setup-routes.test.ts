@@ -185,10 +185,10 @@ describe("POST /tweaklet/setup/repo", () => {
     const res = await request(app)
       .post("/tweaklet/setup/repo")
       .set("x-tweaklet-setup-token", KNOWN_TOKEN)
-      .send({ allowlist: ["transcenda/t8a"] })
+      .send({ allowlist: ["acme/webapp"] })
       .expect(200);
-    expect(res.body.allowlist).toEqual(["transcenda/t8a"]);
-    expect(store.get().repo?.allowlist).toEqual(["transcenda/t8a"]);
+    expect(res.body.allowlist).toEqual(["acme/webapp"]);
+    expect(store.get().repo?.allowlist).toEqual(["acme/webapp"]);
     expect(cloneCalled).toBe(false);
   });
 
@@ -322,7 +322,7 @@ describe("POST /tweaklet/setup/complete", () => {
       ...baseConfig,
       github: { clientId: "cid", clientSecret: "sec", oauthBaseUrl: "https://github.com", apiBaseUrl: "https://api.github.com" },
       agent: { command: "opencode", cwd: "/app", vertexProject: "my-proj", model: "gemini" },
-      repo: { path: "/repo", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: ["transcenda/t8a"] },
+      repo: { path: "/repo", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: ["acme/webapp"] },
     };
     const store = makeConfigStore(fullConfig);
     const app = createServer(structuredClone(fullConfig), {
@@ -455,7 +455,7 @@ describe("computeSetupState pure function", () => {
   it("marks repo as done when an allowlist is configured (clone is post-sign-in)", () => {
     const cfg: TweakletConfig = {
       ...baseConfig,
-      repo: { path: "/repo", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: ["transcenda/t8a"] },
+      repo: { path: "/repo", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: ["acme/webapp"] },
     };
     const state = computeSetupState(cfg, allOkChecks);
     expect(state.steps.find((s) => s.id === "repo")!.status).toBe("done");
@@ -466,7 +466,7 @@ describe("computeSetupState pure function", () => {
       ...baseConfig,
       github: { clientId: "x", clientSecret: "y", oauthBaseUrl: "https://github.com", apiBaseUrl: "https://api.github.com" },
       agent: { command: "opencode", cwd: "/app", vertexProject: "proj" },
-      repo: { path: "/repo", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: ["transcenda/t8a"] },
+      repo: { path: "/repo", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: ["acme/webapp"] },
     };
     const state = computeSetupState(cfg, allOkChecks);
     expect(state.firstIncompleteStepId).toBeNull();
@@ -477,7 +477,7 @@ describe("computeSetupState pure function", () => {
     const cfg: TweakletConfig = {
       ...baseConfig,
       agent: { command: "opencode", cwd: "/app", vertexProject: "proj" },
-      repo: { path: "/repo", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: ["transcenda/t8a"] },
+      repo: { path: "/repo", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: ["acme/webapp"] },
     };
     const state = computeSetupState(cfg, allOkChecks);
     expect(state.firstIncompleteStepId).toBe("github");

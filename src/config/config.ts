@@ -65,7 +65,7 @@ export const ConfigSchema = z.object({
     .optional(),
   preview: z
     .object({
-      serviceName: z.string(),           // systemd unit Tweaklet (re)starts, e.g. "t8a-frontend-dev"
+      serviceName: z.string(),           // systemd unit Tweaklet (re)starts, e.g. "webapp-dev"
       subdir: z.string(),                // dev-server cwd relative to repo.path, e.g. "frontend"
       installCheckDir: z.string(),       // if missing, run install before starting, e.g. "frontend/node_modules"
     })

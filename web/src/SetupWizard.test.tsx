@@ -266,7 +266,7 @@ describe("RepoStep allowlist editor", () => {
           { id: "agent", label: "AI agent", status: "done" },
           { id: "repo", label: "Repository", status: "done" },
         ],
-        allowlist: ["transcenda/t8a"],
+        allowlist: ["acme/webapp"],
       })
     );
 
@@ -275,11 +275,11 @@ describe("RepoStep allowlist editor", () => {
     const textarea = await screen.findByLabelText(/allowed repositories/i);
     expect(textarea).toBeInTheDocument();
 
-    fireEvent.change(textarea, { target: { value: "transcenda/t8a" } });
+    fireEvent.change(textarea, { target: { value: "acme/webapp" } });
     fireEvent.click(screen.getByRole("button", { name: /save repositories/i }));
 
     await waitFor(() =>
-      expect(setupApiMock.repo).toHaveBeenCalledWith({ allowlist: ["transcenda/t8a"] })
+      expect(setupApiMock.repo).toHaveBeenCalledWith({ allowlist: ["acme/webapp"] })
     );
   });
 });
