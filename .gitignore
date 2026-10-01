@@ -10,7 +10,6 @@ web/dist/
 .env
 .env.*
 *.pem
-~/.tweaklet
 config.json
 
 # Logs
@@ -22,6 +21,8 @@ npm-debug.log*
 .idea/
 .vscode/
 *.swp
+
+.claude/settings.local.json
 
 # Tooling
 .playwright-mcp/

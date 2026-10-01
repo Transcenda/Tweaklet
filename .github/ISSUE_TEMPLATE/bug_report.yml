@@ -1,0 +1,54 @@
+name: Bug report
+description: Something in Tweaklet doesn't work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **This tracker is public.** Don't paste tokens, OAuth secrets,
+        `~/.tweaklet/config.json` contents, hostnames or IPs of your deployment, or private
+        repository names. Redact them (`example.com`, `acme/webapp`).
+        Security problems: please [report privately](https://github.com/Transcenda/Tweaklet/security/advisories/new) instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start a change from the panel
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Tweaklet version
+      placeholder: v0.0.5 (from the release you installed, or a commit SHA)
+    validations:
+      required: true
+  - type: input
+    id: opencode
+    attributes:
+      label: opencode version
+      placeholder: "output of `opencode --version`"
+  - type: dropdown
+    id: env
+    attributes:
+      label: Where does the server run?
+      options:
+        - Linux server / VM
+        - macOS (local development)
+        - Container
+        - Other
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or doctor output
+      description: Server log lines or the panel's doctor checks. Redact anything deployment-specific.
+      render: text

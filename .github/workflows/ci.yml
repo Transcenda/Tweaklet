@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  public-repo-check:
+    name: Public-repo check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: sh scripts/check-public.sh
+
+  test:
+    name: Test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+      # Git-level tests make commits in temporary repos.
+      - run: git config --global user.name "CI" && git config --global user.email "ci@example.com" && git config --global init.defaultBranch main
+      - run: npm ci --ignore-scripts
+      - run: npm --prefix web ci
+      - run: npm run typecheck
+      - run: npm test -- --testTimeout=60000
+      - run: npm --prefix web test
+      - run: npm run build:all
