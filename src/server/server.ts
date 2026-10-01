@@ -57,6 +57,7 @@ export interface ServerDeps {
     listBranches: typeof repoLib.listBranches;
     switchBranch: typeof repoLib.switchBranch;
     deleteBranch: typeof repoLib.deleteBranch;
+    branchOwner: typeof repoLib.branchOwner;
     refresh: typeof realRefresh;
     createDraftPr: typeof prLib.createDraftPr;
     prStatus: typeof prLib.prStatus;
@@ -85,6 +86,8 @@ export interface ServerDeps {
   sessionStore?: SessionStore;
   /** Injectable opencode message fetch (for re-hydrating /agent/history). Stubbed in tests. */
   fetchSessionMessages?: typeof realFetchSessionMessages;
+  /** Upper bound for /agent/history, so a stuck opencode can't hang the panel. */
+  historyTimeoutMs?: number;
 }
 
 const SESSION_COOKIE = "apz_session";
@@ -185,6 +188,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     listBranches: repoLib.listBranches,
     switchBranch: repoLib.switchBranch,
     deleteBranch: repoLib.deleteBranch,
+    branchOwner: repoLib.branchOwner,
     refresh: realRefresh,
     createDraftPr: prLib.createDraftPr,
     prStatus: prLib.prStatus,
@@ -225,10 +229,25 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     try { await doEnsurePreview(config.repo.path, config.preview); }
     catch (e) { console.warn("Tweaklet: live-preview refresh failed:", String(e)); }
   }
-  /** Branch-moving operations must not race an agent run editing the tree. */
-  function refuseWhileRunning(res: Response): boolean {
-    if (agentRunning) { res.status(409).json({ error: "the agent is still working — stop it first" }); return true; }
-    return false;
+  // ── One writer at a time on the shared clone ─────────────────────────────
+  // Every route that moves HEAD or rewrites the working tree takes this lock
+  // for its whole duration (released when the response finishes), and refuses
+  // while an agent turn is editing files. Prompts refuse while it's held.
+  let treeBusy = false;
+  const TREE_ROUTES = [
+    "/agent/idea", "/agent/sync", "/agent/checkpoint", "/agent/undo", "/agent/reject",
+    "/agent/preview", "/agent/preview/exit", "/agent/restore",
+    "/agent/branches/switch", "/agent/branches/delete",
+  ];
+  function treeLock(_req: Request, res: Response, next: NextFunction): void {
+    if (agentRunning) { res.status(409).json({ error: "the agent is still working — stop it first" }); return; }
+    if (treeBusy) { res.status(409).json({ error: "another change operation is still running — try again in a moment" }); return; }
+    treeBusy = true;
+    let released = false;
+    const release = () => { if (!released) { released = true; treeBusy = false; } };
+    res.on("finish", release);
+    res.on("close", release);
+    next();
   }
   const secret = config.server.sessionSecret;
   const basePath = config.server.basePath ?? "/tweaklet";
@@ -563,6 +582,8 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     res.status(204).end();
   });
 
+  router.post(TREE_ROUTES, authGate, treeLock);
+
   router.get("/agent/me", authGate, (req, res) => {
     // needsReauth: OAuth is configured but this server no longer holds the
     // user's token (tokens are memory-only, so any restart drops them). Without
@@ -597,6 +618,15 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       res.status(409).json({ error: "an agent run is already in progress" });
       return;
     }
+    if (treeBusy) {
+      res.status(409).json({ error: "another change operation is still running — try again in a moment" });
+      return;
+    }
+    if (previewing) {
+      // A detached preview isn't a change: edits made there would be lost.
+      res.status(409).json({ error: "you're previewing an earlier save — restore it or go back to the latest first" });
+      return;
+    }
     const user = currentUser(req)!;
     agentRunning = true;
     res.status(200).set({
@@ -620,7 +650,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       // A prompt never runs on the base branch: start a fresh change (cut from
       // the latest base) first, so every edit is isolated and reviewable.
       if (config.repo?.path && (await lc.currentBranch(config.repo.path)) === config.repo.baseBranch) {
-        const started = await lc.startBranch(config.repo.path, { ...branchOpts(), idea: titleFromPrompt(prompt), token: currentToken(req)?.token ?? "", author: authorFor(req) });
+        const started = await lc.startBranch(config.repo.path, { ...branchOpts(), idea: titleFromPrompt(prompt), token: currentToken(req)?.token ?? "", author: authorFor(req), owner: user.login });
         sessions.delete(keyFor(user.login, started.branch));
         previewing = null;
         send({ type: "branch", ...started } as any);
@@ -706,11 +736,10 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       // stale-base drift. Without a token (local/CLI auth, no OAuth) syncBase is a
       // best-effort no-op and the change starts from the local base, so starting a
       // change must NOT require a token (only clone/PR, which truly hit GitHub, do).
-      if (refuseWhileRunning(res)) return;
       const tok = currentToken(req);
-      const started = await lc.startBranch(config.repo!.path!, { ...branchOpts(), idea, token: tok?.token ?? "", author: authorFor(req) });
+      const started = await lc.startBranch(config.repo!.path!, { ...branchOpts(), idea, token: tok?.token ?? "", author: authorFor(req), owner: user.login });
       sessions.delete(keyFor(user.login, started.branch)); // a new change starts with fresh memory
-      previewing = null;
+      previewing = null; lastBranch = null;
       await syncPreview();
       res.json(started);
     } catch (e) { res.status(500).json({ error: String(e) }); }
@@ -735,6 +764,10 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     if (!tok) { res.status(401).json({ error: "sign in again" }); return; }
     try {
       const message = String(req.body?.message ?? "checkpoint").trim() || "checkpoint";
+      if ((await lc.currentBranch(config.repo!.path!)) === config.repo!.baseBranch) {
+        res.status(409).json({ error: "start a change first — saves never go on the base branch" });
+        return;
+      }
       await lc.checkpoint(config.repo!.path!, message, { name: tok.name, email: tok.email });
       res.status(204).end();
     } catch (e) { res.status(500).json({ error: String(e) }); }
@@ -750,7 +783,6 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   // branch (drops the sandbox branch). Backs the panel's "Reject changes" button.
   router.post("/agent/reject", authGate, async (req, res) => {
     if (!requireRepo(res)) return;
-    if (refuseWhileRunning(res)) return;
     try {
       sessions.delete(await sessionKey(currentUser(req)!.login));
       await lc.reject(config.repo!.path!, {
@@ -814,12 +846,11 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
 
   router.post("/agent/branches/switch", authGate, async (req, res) => {
     if (!requireRepo(res)) return;
-    if (refuseWhileRunning(res)) return;
     const branch = String(req.body?.branch ?? "");
     if (!branch) { res.status(400).json({ error: "no branch" }); return; }
     try {
       await lc.switchBranch(config.repo!.path!, branch, { ...branchOpts(), author: authorFor(req) });
-      previewing = null;
+      previewing = null; lastBranch = null;
       await syncPreview();
       res.json({ branch });
     } catch (e) {
@@ -830,13 +861,20 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
 
   router.post("/agent/branches/delete", authGate, async (req, res) => {
     if (!requireRepo(res)) return;
-    if (refuseWhileRunning(res)) return;
     const branch = String(req.body?.branch ?? "");
     if (!branch) { res.status(400).json({ error: "no branch" }); return; }
     try {
+      // Deleting is permanent and local-only: only whoever started the change
+      // may delete it (changes from before owners were recorded stay open).
+      const login = currentUser(req)!.login;
+      const owner = await lc.branchOwner(config.repo!.path!, branch);
+      if (owner && owner.toLowerCase() !== login.toLowerCase()) {
+        res.status(403).json({ error: `only @${owner} can delete this change` });
+        return;
+      }
       await lc.deleteBranch(config.repo!.path!, branch, branchOpts());
-      sessions.delete(keyFor(currentUser(req)!.login, branch));
-      previewing = null;
+      sessions.delete(keyFor(login, branch));
+      previewing = null; lastBranch = null;
       await syncPreview();
       res.status(204).end();
     } catch (e) {
@@ -853,8 +891,10 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     const sid = sessions.get(await sessionKey(user.login));
     if (!sid) { res.json({ events: [] }); return; }
     try {
-      const client = await getClient();
-      const msgs = await doFetchMessages(client, sid);
+      const msgs = await Promise.race([
+        getClient().then((client) => doFetchMessages(client, sid)),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("history timed out — the agent isn't responding")), deps.historyTimeoutMs ?? 8000).unref?.()),
+      ]);
       res.json({ events: messagesToEvents(msgs), sessionId: sid });
     } catch (e) {
       res.json({ events: [], error: String(e) });

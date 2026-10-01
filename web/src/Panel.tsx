@@ -150,9 +150,9 @@ function savesLabel(n: number): string { return n === 0 ? "no saves yet" : n ===
 // delete, and a way back to the live app. Switching never loses work — the
 // server auto-saves the current change's unsaved edits first.
 function ChangeSwitcher({
-  branches, base, onFeature, busy, onSwitch, onDelete, onNew, onClose,
+  branches, base, me, onFeature, busy, onSwitch, onDelete, onNew, onClose,
 }: {
-  branches: ChangeBranch[]; base: string; onFeature: boolean; busy: boolean;
+  branches: ChangeBranch[]; base: string; me: string; onFeature: boolean; busy: boolean;
   onSwitch: (b: string) => void; onDelete: (b: ChangeBranch) => void; onNew: () => void; onClose: () => void;
 }) {
   return (
@@ -169,21 +169,26 @@ function ChangeSwitcher({
       </div>
       {branches.length === 0 ? (
         <div className="apz-switcher-empty">Describe a change below and Tweaklet starts one on a fresh copy of {base}.</div>
-      ) : branches.map((b) => (
+      ) : branches.map((b) => {
+        const someoneElse = !!b.owner && b.owner.toLowerCase() !== me.toLowerCase();
+        return (
         <div key={b.name} className={"apz-change-row" + (b.current ? " is-current" : "")}>
           <button type="button" role="menuitem" className="apz-change" disabled={busy || b.current} onClick={() => onSwitch(b.name)} title={b.name}>
             <span className="apz-change-dot" />
             <span className="apz-change-main">
               <span className="apz-change-title">{b.title}</span>
               <span className="apz-change-meta">
-                {savesLabel(b.saves)} · {b.updated}
+                {savesLabel(b.saves)} · {b.updated}{someoneElse && ` · @${b.owner}`}
                 {b.dirty && <span className="apz-change-tag">unsaved</span>}
               </span>
             </span>
           </button>
-          <button type="button" className="apz-change-del" aria-label={`Delete ${b.title}`} title="Delete this change" disabled={busy} onClick={() => onDelete(b)}>✕</button>
+          {!someoneElse && (
+            <button type="button" className="apz-change-del" aria-label={`Delete ${b.title}`} title="Delete this change" disabled={busy} onClick={() => onDelete(b)}>✕</button>
+          )}
         </div>
-      ))}
+        );
+      })}
       <button type="button" role="menuitem" className="apz-switcher-new" disabled={busy} onClick={onNew}>+ New change</button>
     </div>
   );
@@ -221,6 +226,9 @@ export function Panel() {
   const [prompt, setPrompt] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
   const [busy, setBusy] = useState(false);
+  // `running` = an agent turn is streaming (Stop applies); `busy` also covers
+  // quick git operations (switch / start / save), which show a quieter hint.
+  const [running, setRunning] = useState(false);
   const [prUrl, setPrUrl] = useState<string | null>(null);
   const [checks, setChecks] = useState<DoctorCheck[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -349,6 +357,7 @@ export function Panel() {
     if (!text || busy) return;
     sentRef.current = true;
     setBusy(true);
+    setRunning(true);
     push({ kind: "you", text });
     setPrompt("");
     if (taRef.current) taRef.current.style.height = "auto";
@@ -475,6 +484,7 @@ export function Panel() {
       push({ kind: "error", text: String(err) });
     } finally {
       setBusy(false);
+      setRunning(false);
       taRef.current?.focus();
       void refreshState();
     }
@@ -533,10 +543,13 @@ export function Panel() {
     await ctl(() => api.undo(), "↩ undid the unsaved edits");
   }
 
-  /** Load a change's own conversation after switching to it. */
-  async function loadConversation() {
-    try { setRows(historyRows((await api.history()).events)); }
-    catch { setRows([]); }
+  /** Load a change's own conversation after switching to it. Never blocks the
+   *  switch: the log clears at once and fills in when the agent answers. */
+  function loadConversation() {
+    setRows([]);
+    api.history()
+      .then(({ events }) => setRows((cur) => (cur.length > 0 ? cur : historyRows(events))))
+      .catch(() => {});
   }
 
   async function startChange() {
@@ -560,7 +573,7 @@ export function Panel() {
     try {
       await api.switchBranch(branch);
       setPrUrl(null);
-      await loadConversation();
+      loadConversation();
     } catch (e) { push({ kind: "error", text: String(e) }); }
     finally { setBusy(false); void refreshState(); }
   }
@@ -612,7 +625,7 @@ export function Panel() {
             {onFeature ? (currentChange?.title ?? vcs?.branch) : `Live app · ${vcs?.base ?? "main"}`}
           </span>
           {changeList.length > 0 && <span className="apz-switch-count" title={`${changeList.length} in progress`}>{changeList.length}</span>}
-          <span className="apz-switch-caret" aria-hidden="true">▾</span>
+          <svg className="apz-switch-caret" aria-hidden="true" viewBox="0 0 10 6" width="10" height="6"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
         {onFeature ? (
           <div className="apz-bar-actions">
@@ -622,10 +635,12 @@ export function Panel() {
         ) : (
           <button type="button" className="apz-bar-btn apz-bar-btn--primary" disabled={busy} onClick={startChange}>New change</button>
         )}
+        {switchOpen && <div className="apz-switch-backdrop" aria-hidden="true" onClick={() => setSwitchOpen(false)} />}
         {switchOpen && (
           <ChangeSwitcher
             branches={changeList}
             base={vcs?.base ?? "main"}
+            me={user.login}
             onFeature={onFeature}
             busy={busy}
             onSwitch={(b) => void switchTo(b)}
@@ -757,7 +772,9 @@ export function Panel() {
         {busy && (
           <div className="apz-working">
             <div className="apz-run" aria-label="working"><i /><i /><i /></div>
-            <button className="apz-stop" aria-label="Stop" onClick={() => { void api.stop(); }}>Stop</button>
+            {running
+              ? <button className="apz-stop" aria-label="Stop" onClick={() => { void api.stop(); }}>Stop</button>
+              : <span className="apz-working-hint">One moment…</span>}
           </div>
         )}
         {prUrl && (

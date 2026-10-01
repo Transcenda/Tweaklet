@@ -137,6 +137,16 @@ describe("GET /tweaklet/agent/history", () => {
   });
 });
 
+describe("GET /tweaklet/agent/history timeout", () => {
+  it("answers with no events instead of hanging when opencode never comes up", async () => {
+    const store = noopStore(); store.set("alice", "s1");
+    const res = await request(appWith({ getClient: () => new Promise(() => {}), sessionStore: store, historyTimeoutMs: 50 }))
+      .get("/tweaklet/agent/history").set("Cookie", authCookie).expect(200);
+    expect(res.body.events).toEqual([]);
+    expect(res.body.error).toMatch(/timed out/);
+  });
+});
+
 describe("POST /tweaklet/agent/permission", () => {
   it("emits a permission_ask SSE frame, then resolves the pending ask on approve (202)", async () => {
     // runPrompt that calls onAsk and waits for the resolution before finishing.
@@ -416,5 +426,20 @@ describe("POST /tweaklet/agent/prompt on the base branch", () => {
     branch.name = "tweaklet/a";
     await request(app).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "back on a" }).expect(200);
     expect(seen).toEqual([undefined, undefined, "sess-1"]);
+  });
+
+  it("refuses a prompt while previewing an earlier save (edits there would be lost)", async () => {
+    const lifecycle = {
+      currentBranch: async () => "tweaklet/a",
+      isDirty: async () => false,
+      branchState: async () => ({ branch: "tweaklet/a", base: "main", onFeature: true, commits: [] }),
+      previewCommit: async () => {},
+    } as any;
+    let ran = false;
+    const app = appWith({ lifecycle, runPrompt: async () => { ran = true; return { sessionId: "s", blocked: [] }; } }, withRepo);
+    await request(app).post("/tweaklet/agent/preview").set("Cookie", authCookie).send({ sha: "a".repeat(40) }).expect(204);
+    const res = await request(app).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "x" }).expect(409);
+    expect(res.body.error).toMatch(/previewing/);
+    expect(ran).toBe(false);
   });
 });

@@ -397,7 +397,10 @@ button.apz-avatar:hover { border-color: var(--line-2); background: var(--surface
   display: grid; place-items: center; font-size: 10.5px; font-weight: 600;
   background: var(--accent-tint); color: var(--accent-d);
 }
-.apz-switch-caret { flex: none; color: var(--muted); font-size: 10px; }
+.apz-switch-caret { flex: none; color: var(--muted); transition: transform .15s; }
+.apz-switch[aria-expanded="true"] .apz-switch-caret { transform: rotate(180deg); }
+.apz-switch-backdrop { position: fixed; inset: 0; z-index: 24; }
+.apz-working-hint { font-size: 11px; color: var(--muted); }
 
 .apz-switcher {
   position: absolute; top: calc(100% + 4px); left: 8px; right: 8px; z-index: 25;

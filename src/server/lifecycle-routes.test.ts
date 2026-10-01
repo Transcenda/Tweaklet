@@ -23,6 +23,7 @@ const lifecycle = {
   listBranches: async () => [{ name: "tweaklet/a", title: "A", saves: 2, updated: "1 hour ago", current: true, dirty: false }],
   switchBranch: async () => {},
   deleteBranch: async () => {},
+  branchOwner: async () => null,
   syncIntoBranch: async () => ({ status: "up-to-date" as const }),
   currentBranch: async () => "sandbox/alice-bigger",
   checkpoint: async () => {},
@@ -213,5 +214,45 @@ describe("change workspace endpoints", () => {
     const tok = await signInAlice(a);
     const after = await request(a).get("/tweaklet/agent/me").set("Cookie", tok).expect(200);
     expect(after.body.needsReauth).toBe(false);
+  });
+
+  it("records the signed-in user as the change's owner", async () => {
+    let seen: any;
+    const a = app({ startBranch: async (_c: string, o: any) => { seen = o; return { branch: "b", title: "t", synced: true }; } });
+    await request(a).post("/tweaklet/agent/idea").set("Cookie", cookie).send({ idea: "x" }).expect(200);
+    expect(seen.owner).toBe("alice");
+  });
+
+  it("only the owner can delete a change", async () => {
+    let deleted = false;
+    const a = app({ branchOwner: async () => "bob", deleteBranch: async () => { deleted = true; } });
+    const res = await request(a).post("/tweaklet/agent/branches/delete").set("Cookie", cookie).send({ branch: "sandbox/b" }).expect(403);
+    expect(res.body.error).toMatch(/@bob/);
+    expect(deleted).toBe(false);
+    const mine = app({ branchOwner: async () => "Alice", deleteBranch: async () => { deleted = true; } });
+    await request(mine).post("/tweaklet/agent/branches/delete").set("Cookie", cookie).send({ branch: "sandbox/b" }).expect(204);
+    expect(deleted).toBe(true);
+  });
+
+  it("one change operation at a time: a second one while the first runs gets 409, then works", async () => {
+    let release: () => void = () => {};
+    const a = app({ startBranch: () => new Promise((r) => { release = () => r({ branch: "b", title: "t", synced: true }); }) });
+    const first = request(a).post("/tweaklet/agent/idea").set("Cookie", cookie).send({ idea: "slow" }).then((r) => r);
+    await new Promise((r) => setTimeout(r, 50));
+    const busy = await request(a).post("/tweaklet/agent/branches/switch").set("Cookie", cookie).send({ branch: "sandbox/a" });
+    expect(busy.status).toBe(409);
+    expect(busy.body.error).toMatch(/another change operation/);
+    release();
+    expect((await first).status).toBe(200);
+    await request(a).post("/tweaklet/agent/branches/switch").set("Cookie", cookie).send({ branch: "sandbox/a" }).expect(200);
+  });
+
+  it("refuses to save on the base branch", async () => {
+    let saved = false;
+    const a = app({ currentBranch: async () => "main", checkpoint: async () => { saved = true; } });
+    const tok = await signInAlice(a);
+    const res = await request(a).post("/tweaklet/agent/checkpoint").set("Cookie", tok).send({}).expect(409);
+    expect(res.body.error).toMatch(/start a change first/);
+    expect(saved).toBe(false);
   });
 });

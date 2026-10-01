@@ -545,8 +545,8 @@ describe("Panel", () => {
 
   describe("change switcher", () => {
     const changes = [
-      { name: "tweaklet/login-copy", title: "Login copy", saves: 1, updated: "5 minutes ago", current: true, dirty: true },
-      { name: "tweaklet/bigger-buttons", title: "Bigger buttons", saves: 3, updated: "2 days ago", current: false, dirty: false },
+      { name: "tweaklet/login-copy", title: "Login copy", owner: "alice", saves: 1, updated: "5 minutes ago", current: true, dirty: true },
+      { name: "tweaklet/bigger-buttons", title: "Bigger buttons", owner: null, saves: 3, updated: "2 days ago", current: false, dirty: false },
     ];
     beforeEach(() => {
       apiMock.state.mockResolvedValue({ branch: "tweaklet/login-copy", base: "main", onFeature: true, commits: [], previewing: null });
@@ -575,6 +575,45 @@ describe("Panel", () => {
       fireEvent.click(screen.getByRole("menuitem", { name: /bigger buttons/i }));
       await waitFor(() => expect(apiMock.switchBranch).toHaveBeenCalledWith("tweaklet/bigger-buttons"));
       expect(await screen.findByText("make buttons bigger")).toBeInTheDocument();
+    });
+
+    it("a slow switch shows a quiet hint, not the agent's Stop button", async () => {
+      let release: () => void = () => {};
+      apiMock.switchBranch.mockImplementation(() => new Promise<void>((r) => { release = r; }));
+      render(<Panel />);
+      await openSwitcher();
+      fireEvent.click(screen.getByRole("menuitem", { name: /bigger buttons/i }));
+      expect(await screen.findByText(/one moment/i)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^stop$/i })).not.toBeInTheDocument();
+      release();
+      await waitFor(() => expect(screen.queryByText(/one moment/i)).not.toBeInTheDocument());
+    });
+
+    it("never waits on the conversation to finish switching", async () => {
+      apiMock.history.mockResolvedValueOnce({ events: [] }).mockImplementationOnce(() => new Promise(() => {})); // agent never answers
+      render(<Panel />);
+      await openSwitcher();
+      fireEvent.click(screen.getByRole("menuitem", { name: /bigger buttons/i }));
+      await waitFor(() => expect(screen.getByPlaceholderText(/describe a change/i)).not.toBeDisabled());
+      await waitFor(() => expect(screen.queryByText(/one moment/i)).not.toBeInTheDocument());
+    });
+
+    it("closes when clicking outside", async () => {
+      const { container } = render(<Panel />);
+      await openSwitcher();
+      fireEvent.click(container.querySelector(".apz-switch-backdrop")!);
+      expect(screen.queryByRole("menu", { name: /your changes/i })).not.toBeInTheDocument();
+    });
+
+    it("shows who started someone else's change and offers no delete for it", async () => {
+      apiMock.branches.mockResolvedValue({ base: "main", current: "tweaklet/login-copy", branches: [...changes, { name: "tweaklet/bobs", title: "Bob's idea", owner: "bob", saves: 1, updated: "1 hour ago", current: false, dirty: false }] });
+      render(<Panel />);
+      const btn = await screen.findByRole("button", { name: /your changes — login copy/i });
+      fireEvent.click(btn);
+      const menu = await screen.findByRole("menu", { name: /your changes/i });
+      expect(menu).toHaveTextContent("1 save · 1 hour ago · @bob");
+      expect(screen.queryByRole("button", { name: /delete bob's idea/i })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /delete login copy/i })).toBeInTheDocument();
     });
 
     it("can go back to the live app", async () => {

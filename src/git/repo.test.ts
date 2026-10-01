@@ -381,4 +381,41 @@ describe("branch workspace", () => {
     await expect(deleteBranch(clone, "release", opts)).rejects.toThrow(/not a Tweaklet change/);
     expect(g(clone, "rev-parse", "--verify", "release")).toBeTruthy();
   });
+
+  it("never discards unsaved work when the auto-save is rejected by a repo hook — it saves past hooks", async () => {
+    const { branch } = await start("Hooked");
+    // A commitlint-style hook that rejects our WIP message, as husky would install.
+    writeFileSync(join(clone, ".git", "hooks", "commit-msg"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    writeFileSync(join(clone, "edit.txt"), "precious\n");
+    await start("Next idea");
+    expect(g(clone, "show", `${branch}:edit.txt`)).toBe("precious");
+  });
+
+  it("refuses to move on (and keeps the edits) when the work can't be auto-saved at all", async () => {
+    await start("Locked");
+    writeFileSync(join(clone, "edit.txt"), "precious\n");
+    writeFileSync(join(clone, ".git", "index.lock"), ""); // any commit now fails
+    await expect(start("Next")).rejects.toThrow(/couldn't auto-save/i);
+    rmSync(join(clone, ".git", "index.lock"));
+    expect(readFileSync(join(clone, "edit.txt"), "utf8")).toBe("precious\n");
+  });
+
+  it("rescues local-only commits on the base into a recovery change before resetting it", async () => {
+    writeFileSync(join(clone, "old-flow.txt"), "saved on main by the old flow\n");
+    g(clone, "add", "-A"); g(clone, "commit", "-q", "-m", "checkpoint on main");
+    pushOnOrigin("upstream.txt", "theirs\n");
+    await start("Fresh");
+    const list = await listBranches(clone, opts);
+    const rescued = list.find((b) => b.title.startsWith("Recovered work from main"));
+    expect(rescued).toBeTruthy();
+    expect(g(clone, "show", `${rescued!.name}:old-flow.txt`)).toBe("saved on main by the old flow");
+    expect(g(clone, "rev-parse", "main")).toBe(g(clone, "rev-parse", "origin/main"));
+  });
+
+  it("records who started a change and exposes it in the list", async () => {
+    await startBranch(clone, { ...opts, idea: "Mine", token: "", author: me, owner: "alice" });
+    await save("m.txt", "m");
+    const [b] = await listBranches(clone, opts);
+    expect(b.owner).toBe("alice");
+  });
 });

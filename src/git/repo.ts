@@ -125,10 +125,17 @@ async function settleTree(cwd: string, o: { base: string; prefix: string; author
   }
   const branch = await currentBranch(cwd);
   if (isChangeBranch(branch, o) && await isDirty(cwd)) {
+    // --no-verify: the repo's own hooks (husky / commitlint) must not be able to
+    // turn an auto-save into data loss. If saving still fails, STOP — never fall
+    // back to discarding someone's unsaved work.
+    const a = o.author ?? AUTOSAVE_AUTHOR;
     try {
-      await checkpoint(cwd, AUTOSAVE_MESSAGE, o.author ?? AUTOSAVE_AUTHOR);
-      return;
-    } catch { /* e.g. a conflicted index — fall through and discard */ }
+      await git(cwd, ["add", "-A"]);
+      await git(cwd, ["-c", `user.name=${a.name}`, "-c", `user.email=${a.email}`, "commit", "-q", "--no-verify", "-m", AUTOSAVE_MESSAGE]);
+    } catch (e) {
+      throw new Error(`couldn't auto-save the unsaved edits on ${branch} — nothing was changed (${String(e).split("\n")[0]})`);
+    }
+    return;
   }
   await git(cwd, ["reset", "-q", "--hard", "HEAD"]);
   await git(cwd, ["clean", "-fdq"]);
@@ -178,13 +185,17 @@ export interface StartResult {
  */
 export async function startBranch(
   cwd: string,
-  opts: { base: string; prefix: string; idea: string; token: string; author?: CommitAuthor },
+  opts: { base: string; prefix: string; idea: string; token: string; author?: CommitAuthor; owner?: string },
 ): Promise<StartResult> {
   assertSafeRef(opts.base, "base");
   await settleTree(cwd, opts);
   const synced = await fetchBase(cwd, opts.base, opts.token);
-  if (synced) await git(cwd, ["checkout", "-q", "-B", opts.base, `origin/${opts.base}`]);
-  else await git(cwd, ["checkout", "-q", opts.base]);
+  if (synced) {
+    await rescueLocalBaseCommits(cwd, opts);
+    await git(cwd, ["checkout", "-q", "-B", opts.base, `origin/${opts.base}`]);
+  } else {
+    await git(cwd, ["checkout", "-q", opts.base]);
+  }
   await pruneEmptyBranches(cwd, opts);
   // Leading dashes stripped so the title can never read as a `git config` flag.
   const title = opts.idea.trim().replace(/\s+/g, " ").replace(/^-+\s*/, "").slice(0, 120) || "New change";
@@ -192,7 +203,21 @@ export async function startBranch(
   assertSafeRef(branch, "branch");
   await git(cwd, ["checkout", "-q", "-b", branch]);
   await git(cwd, ["config", `branch.${branch}.description`, title]);
+  if (opts.owner) await git(cwd, ["config", `branch.${branch}.tweakletOwner`, opts.owner]);
   return { branch, title, synced };
+}
+
+/** Before the base is hard-reset to origin, move any local-only commits on it
+ *  (e.g. saves made on the base by an older Tweaklet) onto a recovery change,
+ *  so resetting can never destroy committed work. */
+async function rescueLocalBaseCommits(cwd: string, o: { base: string; prefix: string }): Promise<void> {
+  if (!(await branchExists(cwd, o.base))) return;
+  const ahead = Number(await git(cwd, ["rev-list", "--count", `origin/${o.base}..${o.base}`])) || 0;
+  if (ahead === 0) return;
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+  const name = await uniqueBranchName(cwd, `${o.prefix}recovered-${slugify(o.base)}-${stamp}`);
+  await git(cwd, ["branch", name, o.base]);
+  await git(cwd, ["config", `branch.${name}.description`, `Recovered work from ${o.base} (${ahead} save${ahead === 1 ? "" : "s"})`]);
 }
 
 async function pruneEmptyBranches(cwd: string, o: { base: string; prefix: string }): Promise<void> {
@@ -213,9 +238,31 @@ function humanize(branch: string, prefix: string): string {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : branch;
 }
 
+/** `branch.<name>.<key>` for every branch, as a name → value map. */
+async function branchConfig(cwd: string, key: string): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  try {
+    const cfg = await git(cwd, ["config", "--get-regexp", `^branch\\..*\\.${key}$`]);
+    for (const line of cfg.split("\n")) {
+      const m = line.match(new RegExp(`^branch\\.(.+)\\.${key} (.*)$`, "i"));
+      if (m) map.set(m[1], m[2]);
+    }
+  } catch { /* none set → exit 1 */ }
+  return map;
+}
+
+/** Who started a change (GitHub login), or null for changes made before owners were recorded. */
+export async function branchOwner(cwd: string, branch: string): Promise<string | null> {
+  assertSafeRef(branch, "branch");
+  try { return (await git(cwd, ["config", "--get", `branch.${branch}.tweakletOwner`])) || null; }
+  catch { return null; }
+}
+
 export interface ChangeBranch {
   name: string;
   title: string;
+  /** GitHub login of whoever started it (null for older changes). */
+  owner: string | null;
   /** Saves = commits on the change beyond the base. */
   saves: number;
   /** Relative time of the last commit ("2 hours ago"). */
@@ -229,14 +276,8 @@ export interface ChangeBranch {
 export async function listBranches(cwd: string, o: { base: string; prefix: string }): Promise<ChangeBranch[]> {
   assertSafeRef(o.base, "base");
   const out = await git(cwd, ["for-each-ref", "--sort=-committerdate", "--format=%(refname:short)%1f%(committerdate:relative)", "refs/heads/"]);
-  const titles = new Map<string, string>();
-  try {
-    const cfg = await git(cwd, ["config", "--get-regexp", "^branch\\..*\\.description$"]);
-    for (const line of cfg.split("\n")) {
-      const m = line.match(/^branch\.(.+)\.description (.*)$/);
-      if (m) titles.set(m[1], m[2]);
-    }
-  } catch { /* no descriptions yet → exit 1 */ }
+  const titles = await branchConfig(cwd, "description");
+  const owners = await branchConfig(cwd, "tweakletowner"); // git lower-cases config keys
   const current = await currentBranch(cwd);
   const dirty = await isDirty(cwd);
   const rows = out ? out.split("\n").map((l) => l.split("\x1f")) : [];
@@ -246,6 +287,7 @@ export async function listBranches(cwd: string, o: { base: string; prefix: strin
     result.push({
       name,
       title: titles.get(name) ?? humanize(name, o.prefix),
+      owner: owners.get(name) ?? null,
       saves: await aheadOf(cwd, o.base, name),
       updated,
       current: name === current,

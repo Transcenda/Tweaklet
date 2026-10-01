@@ -13,6 +13,16 @@ export interface PreviewResult { started: boolean; installed: boolean; restarted
 // change (e.g. a fresh change cut from a newer main) triggers a reinstall.
 const STAMP_FILE = ".tweaklet-lock";
 
+let inFlight: Promise<unknown> = Promise.resolve();
+
+/** Serialised: two overlapping calls (e.g. serve start + a switch) must never
+ *  run two `npm ci` in the same directory. */
+export function ensurePreview(...args: Parameters<typeof ensurePreviewNow>): Promise<PreviewResult> {
+  const run = inFlight.then(() => ensurePreviewNow(...args), () => ensurePreviewNow(...args));
+  inFlight = run.catch(() => {});
+  return run;
+}
+
 /**
  * Make the live-preview dev server reflect the current clone, disrupting it as
  * little as possible:
@@ -23,7 +33,7 @@ const STAMP_FILE = ".tweaklet-lock";
  * Returns {started:false} when no preview is configured (host-agnostic no-op).
  * Errors propagate to the caller, which treats preview failure as non-fatal.
  */
-export async function ensurePreview(
+async function ensurePreviewNow(
   repoPath: string,
   preview: PreviewConfig | undefined,
   deps: {
@@ -59,6 +69,7 @@ export async function ensurePreview(
   }
   const restarted = installed || !running;
   // Sudoers grants the Tweaklet user exactly this restart (set up in dev infra).
-  if (restarted) await exec("sudo", ["systemctl", "restart", preview.serviceName], { cwd });
+  // -n: fail fast instead of hanging on a password prompt if sudoers drifts.
+  if (restarted) await exec("sudo", ["-n", "systemctl", "restart", preview.serviceName], { cwd });
   return { started: true, installed, restarted };
 }

@@ -14,7 +14,7 @@ function fs(files: Record<string, string>, dirs: string[] = []) {
   };
 }
 const ok = () => vi.fn(async (_cmd: string, _args: string[], _o: { cwd?: string }) => ({ stdout: "", stderr: "" }));
-const restart = ["sudo", ["systemctl", "restart", "t8a-frontend-dev"], expect.anything()] as const;
+const restart = ["sudo", ["-n", "systemctl", "restart", "t8a-frontend-dev"], expect.anything()] as const;
 
 describe("ensurePreview", () => {
   it("no-op when preview is undefined", async () => {
@@ -73,5 +73,19 @@ describe("ensurePreview", () => {
     const r = await ensurePreview("/repo", PREVIEW, { exec, ...fs({}, ["/repo/frontend/node_modules"]) });
     expect(exec).not.toHaveBeenCalledWith("npm", expect.anything(), expect.anything());
     expect(r.installed).toBe(false);
+  });
+
+  it("serialises overlapping calls so two installs never run at once", async () => {
+    let active = 0, maxActive = 0;
+    const exec = vi.fn(async (cmd: string) => {
+      if (cmd === "npm") { active++; maxActive = Math.max(maxActive, active); await new Promise((r) => setTimeout(r, 20)); active--; }
+      return { stdout: "", stderr: "" };
+    });
+    await Promise.all([
+      ensurePreview("/repo", PREVIEW, { exec, ...fs({ [LOCK]: "a" }) }),
+      ensurePreview("/repo", PREVIEW, { exec, ...fs({ [LOCK]: "b" }) }),
+    ]);
+    expect(exec.mock.calls.filter((c) => c[0] === "npm")).toHaveLength(2);
+    expect(maxActive).toBe(1);
   });
 });

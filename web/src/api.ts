@@ -1,6 +1,6 @@
 export interface User { login: string; id: number; needsReauth?: boolean; }
 
-export interface ChangeBranch { name: string; title: string; saves: number; updated: string; current: boolean; dirty: boolean; }
+export interface ChangeBranch { name: string; title: string; owner: string | null; saves: number; updated: string; current: boolean; dirty: boolean; }
 export interface Branches { base: string; current: string; branches: ChangeBranch[]; }
 export interface StartedChange { branch: string; title: string; synced: boolean; }
 
