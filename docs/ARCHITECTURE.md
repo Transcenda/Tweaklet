@@ -1,7 +1,10 @@
 # Tweaklet architecture
 
-How the pieces fit, what each one guarantees, and where to look in the code.
-For installing and operating a server, see [INSTALL.md](INSTALL.md).
+A summary of how the pieces fit, what each one guarantees, and where to look in
+the code. For installing and operating a server, see [INSTALL.md](INSTALL.md).
+The design specs in [specs/](specs/) hold the detail behind each area: the
+business requirements, the UX, and the decisions with their rationale. Each one
+starts with a status line saying how current it is.
 
 ## The pieces
 
@@ -101,6 +104,11 @@ with the clone (`src/run/preview.ts`):
   preview.
 
 ## Configuration
+
+Zero-config is a design principle. The widget needs only its script tag, and
+`tweaklet serve` inside a git repo starts with no config file at all. Every
+option has a default or is detected, and optional features stay off until
+configured.
 
 Everything lives in `~/.tweaklet/config.json`, which is mode `0600` and
 validated by `src/config/config.ts`. `tweaklet serve` with no config

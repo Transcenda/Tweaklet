@@ -28,6 +28,7 @@ tarball (`tweaklet-server.tgz`); install/upgrade with
   restart). Without the token it can't fetch the latest base or submit.
 - The ↩ recovery button now undoes unsaved edits instead of deleting the change.
 - `@opencode-ai/sdk` 1.18.34. Install `opencode-ai@1.18.34` on the host to match.
+- Design: [`docs/specs/2026-10-01-branch-workspace-design.md`](docs/specs/2026-10-01-branch-workspace-design.md).
 
 ## v0.0.4 — Branch-sync (2026-06-21)
 
@@ -64,7 +65,8 @@ tarball (`tweaklet-server.tgz`); install/upgrade with
 - Host-app embed: the dev loader defaults to `/tweaklet` (same-origin) via
   `import.meta.env.DEV` — **no `.env` file needed**; `VITE_TWEAKLET_URL` is only an
   override.
-- Design: [#1](https://github.com/Transcenda/Tweaklet/issues/1).
+- Design: [#1](https://github.com/Transcenda/Tweaklet/issues/1) and
+  [`docs/specs/2026-06-21-zero-config-dock-branch-sync-design.md`](docs/specs/2026-06-21-zero-config-dock-branch-sync-design.md).
 
 ## v0.0.1 — Initial open-source release (2026-06-20)
 

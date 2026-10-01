@@ -11,7 +11,8 @@ Tweaklet is a small TypeScript monorepo:
   the opencode SDK, the DOM-inspect MCP, git/PR flow, the setup wizard API).
 - `web/` — `@tweaklet/widget`: the React/Vite self-mounting Shadow-DOM widget + panel.
 - `skills/` — the bundled `install-tweaklet-widget` agent skill.
-- `docs/` — [ARCHITECTURE.md](docs/ARCHITECTURE.md) (how it works, security model)
+- `docs/` — [ARCHITECTURE.md](docs/ARCHITECTURE.md) (summary: how it works, security
+  model), [specs/](docs/specs/) (design specs: business requirements, UX, decisions),
   and [INSTALL.md](docs/INSTALL.md) (operator guide).
 
 ## Getting set up
@@ -37,6 +38,8 @@ snippets, Vertex AI / model setup, embedding the widget).
   - widget: `npm --prefix web test` (Vitest + Testing Library)
 - **Type-check + build** before pushing: `npm run typecheck` and `npm run build:all`.
 - Keep changes focused; one logical change per PR.
+- **New features start with a design spec** in `docs/specs/` (problem, business
+  requirements, UX, design, non-goals). See [AGENTS.md](AGENTS.md#design-specs).
 - Match the surrounding code style (the repo uses TypeScript strict mode; no extra
   formatter config beyond what's committed).
 - **This repository is public.** Never commit secrets, details of a real deployment

@@ -135,6 +135,36 @@ Once the operator has completed the wizard, end-users interact entirely through 
 
 ---
 
+## Live preview (optional)
+
+To show the agent's edits live, serve the host app's frontend from Tweaklet's
+clone with its dev server (e.g. `vite dev`), then tell Tweaklet how to keep it
+in step. Without a `preview` block, Tweaklet leaves your dev server alone.
+
+```json
+"preview": { "serviceName": "webapp-dev", "subdir": "frontend", "installCheckDir": "frontend/node_modules" }
+```
+
+- **A systemd unit** (`webapp-dev`) runs the dev server in `<repo.path>/<subdir>`.
+  Tweaklet starts it at boot (`systemctl enable`) and restarts it when it isn't
+  running, or after reinstalling dependencies because the lockfile changed.
+- **A narrow sudoers rule** lets the Tweaklet user restart exactly that unit:
+  ```
+  tweaklet ALL=(root) NOPASSWD: /usr/bin/systemctl restart webapp-dev
+  ```
+- **The reverse proxy** sends `/` to the dev server, ideally with a fallback to
+  your static build when it's down (Caddy:
+  `reverse_proxy localhost:5173 localhost:8080 { lb_policy first }`). It keeps
+  `/tweaklet/*` and your API routes pointed at their own backends.
+- **Behind a public hostname, Vite must allow that host and use secure HMR.**
+  Otherwise it answers `403 Blocked request` and live reload never connects. In
+  the host app's `vite.config.ts`:
+  ```ts
+  server: { allowedHosts: ["app.example.com"], hmr: { protocol: "wss", host: "app.example.com", clientPort: 443 } }
+  ```
+
+The doctor's **live preview** check reports a stopped unit.
+
 ## Changing the base path
 
 The default is `/tweaklet`. To use a different prefix set `server.basePath` in `~/.tweaklet/config.json` and update your reverse-proxy rule to match.

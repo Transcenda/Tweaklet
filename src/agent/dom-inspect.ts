@@ -7,10 +7,11 @@ export interface DomResult {
 
 type Ctx = { send: (e: unknown) => void; pending: Map<string, (r: DomResult) => void> };
 
-// One active holder (booking model) → one widget → one live page. The active
-// prompt's SSE `send` + a per-prompt pending map are set for the turn's duration
-// (server wires this in the next task); the MCP tool handler calls
-// requestDomInspect; the widget answers via resolveDomInspect.
+// One agent turn runs at a time (the server refuses a second prompt), so there is
+// one active widget → one live page. The active prompt's SSE `send` + a
+// per-prompt pending map are set for the turn's duration by /agent/prompt; the
+// MCP tool handler calls requestDomInspect; the widget answers via
+// resolveDomInspect.
 let active: Ctx | null = null;
 export function setActivePrompt(ctx: Ctx | null): void { active = ctx; }
 

@@ -26,7 +26,7 @@ rules. They apply to commit messages and PR text as much as to files.
 - **Other products and organisations:** no references to any company's internal
   tools, private repositories, customers, or the apps Tweaklet happens to be
   deployed on. Tweaklet must read as a general tool for *any* web app.
-- **Session artefacts:** implementation plans, agent transcripts, scratch notes,
+- **Session artefacts:** step-by-step implementation plans, agent transcripts, scratch notes,
   local machine setup, and screenshots or recordings that show private data
   (real records, credentials, internal URLs).
 
@@ -58,11 +58,33 @@ a public issue.
 - `web/`: the React + Vite widget, built as a single self-mounting
   `web/dist/widget.js` (Shadow DOM, no iframe).
 - `skills/`: an agent skill that installs the widget into a host app.
-- `docs/`: [ARCHITECTURE.md](docs/ARCHITECTURE.md) (how it works, the security
-  model) and [INSTALL.md](docs/INSTALL.md) (operator guide).
+- `docs/`:
+  - [ARCHITECTURE.md](docs/ARCHITECTURE.md): a summary of how it works and
+    the security model.
+  - [specs/](docs/specs/): design specs covering business requirements, users and
+    their problems, UX flows, and decisions with their rationale.
+  - [INSTALL.md](docs/INSTALL.md): the operator guide.
 
-Read `docs/ARCHITECTURE.md` before changing auth, guardrails, git operations or
-the tree lock.
+Read `docs/ARCHITECTURE.md` and the relevant spec before changing auth,
+guardrails, git operations or the tree lock.
+
+## Design specs
+
+- Every new feature or significant behaviour change gets a spec,
+  `docs/specs/YYYY-MM-DD-<topic>-design.md`, written **before** the code. Cover:
+  - the problem and who has it
+  - the business requirements
+  - the UX: what each kind of user sees and does
+  - the design and its alternatives
+  - non-goals
+- Start every spec with a status line directly under the title:
+  `> **Status:** Current | Partly superseded | Superseded | Proposed (not implemented) — <one sentence, with pointers>`.
+  When later work changes a feature, update the old spec's status line instead
+  of rewriting its history.
+- Specs follow rule zero like everything else. Describe problems and examples
+  generically: "a long-running host", "a host app", `acme/webapp`. Never
+  describe them through a specific deployment.
+- Keep `docs/ARCHITECTURE.md` in sync as the summary.
 
 ## Commands
 
@@ -77,6 +99,27 @@ npm run build:all                 # server + widget bundle
 Git-level tests create real temporary repos and can be slow on a busy machine.
 Raise the per-test timeout (`npx vitest run --testTimeout=60000`) rather than
 weakening the tests.
+
+## Product principles
+
+- **Zero-config.**
+  - The widget must keep working from one `<script src="/tweaklet/widget.js">`
+    tag, with no build step and no `.env`. In dev it loads same-origin from
+    `/tweaklet`.
+  - `tweaklet serve` inside a git repo must start with **no config file**,
+    auto-detecting what it can (repo, base branch, opencode, cloud project,
+    `gh` identity).
+  - Every new option needs a sensible default, or must be detectable, or must
+    be asked for once in the setup wizard.
+  - Optional features, such as the live preview, are no-ops when unconfigured.
+  - Never make an existing setup add config to keep working. If a change would
+    require new setup, treat it as a design problem and solve it with
+    detection or a default first.
+- **Never lose a user's work.** Every operation that moves or rewrites the
+  working tree must save first, or refuse.
+- **Non-engineers are the users.** The panel speaks in changes, saves and
+  submissions, never in branches, commits or refs, and every error says what
+  to do next.
 
 ## Conventions
 
