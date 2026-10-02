@@ -1,9 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { currentBranch, startBranch, checkpoint, discard, reject, slugify, branchState, previewCommit, exitPreview, restoreCommit, isDirty, syncBase, syncIntoBranch, listBranches, switchBranch, deleteBranch } from "./repo.js";
+import { changedFiles, currentBranch, startBranch, checkpoint, discard, reject, slugify, branchState, previewCommit, exitPreview, restoreCommit, isDirty, syncBase, syncIntoBranch, listBranches, switchBranch, deleteBranch } from "./repo.js";
+
+// These tests use a local bare repo as "origin". Authenticated git in
+// production is https-only (protocol.allow=never + https=always); a
+// per-protocol setting outranks that default, so allow `file` here — via git's
+// own env config, so the production hardening stays untouched.
+process.env.GIT_CONFIG_COUNT = "1";
+process.env.GIT_CONFIG_KEY_0 = "protocol.file.allow";
+process.env.GIT_CONFIG_VALUE_0 = "always";
 
 let dir: string;
 function git(...args: string[]) { return execFileSync("git", args, { cwd: dir, encoding: "utf8" }).trim(); }
@@ -17,9 +25,29 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+// Authenticated git calls allow only the https transport. These tests use a
+// local-path "origin", so re-allow the file transport for this test process only.
+const savedEnv: Record<string, string | undefined> = {};
+const FILE_ALLOW = { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "protocol.file.allow", GIT_CONFIG_VALUE_0: "always" };
+beforeAll(() => { for (const [k, v] of Object.entries(FILE_ALLOW)) { savedEnv[k] = process.env[k]; process.env[k] = v; } });
+afterAll(() => { for (const k of Object.keys(FILE_ALLOW)) { if (savedEnv[k] === undefined) delete process.env[k]; else process.env[k] = savedEnv[k]; } });
+
 describe("repo", () => {
   it("slugify makes a branch-safe slug", () => {
     expect(slugify("Make the box BIGGER!")).toBe("make-the-box-bigger");
+  });
+
+  it("slugify collapses long runs of separators quickly (no ReDoS)", () => {
+    const t0 = Date.now();
+    expect(slugify("a" + "-".repeat(100_000) + "b")).toBe("a-b");
+    expect(slugify("-".repeat(100_000) + "!")).toBe("idea");
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+
+  it("slugify never ends in a dash after truncating to 50 chars", () => {
+    expect(slugify("a".repeat(49) + " bcdef")).toBe("a".repeat(49));
+    expect(slugify("x".repeat(80))).toBe("x".repeat(50));
+    expect(slugify("!!!")).toBe("idea");
   });
 
   it("currentBranch reports the checked-out branch", async () => {
@@ -110,6 +138,52 @@ describe("repo", () => {
     expect(msgs).toContain("first");
     expect(msgs).toContain("second");
     expect(msgs.length).toBe(3);
+  });
+
+  it("previewCommit accepts an abbreviated id of a save on the current change", async () => {
+    await startBranch(dir, { base: "main", prefix: "tweaklet/", idea: "x", token: "" });
+    writeFileSync(join(dir, "a.txt"), "one\n"); await checkpoint(dir, "first", { name: "T", email: "t@x.com" });
+    const first = (await branchState(dir, "main")).commits[0].sha;
+    writeFileSync(join(dir, "a.txt"), "two\n"); await checkpoint(dir, "second", { name: "T", email: "t@x.com" });
+    await previewCommit(dir, first.slice(0, 7));
+    expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("one\n");
+  });
+
+  it("previewCommit / restoreCommit refuse anything that isn't a hex commit id", async () => {
+    await startBranch(dir, { base: "main", prefix: "tweaklet/", idea: "x", token: "" });
+    for (const bad of ["main", "HEAD~1", "-q", "--orphan=x", "README.md"]) {
+      await expect(previewCommit(dir, bad), bad).rejects.toThrow(/invalid sha/);
+      await expect(restoreCommit(dir, "tweaklet/x", bad, { name: "T", email: "t@x.com" }), bad).rejects.toThrow(/invalid sha/);
+    }
+    // Hex-looking but not a commit (here: a blob id).
+    const blob = git("rev-parse", "HEAD:README.md");
+    await expect(previewCommit(dir, blob)).rejects.toThrow(/not a save/);
+    expect(await currentBranch(dir)).toBe("tweaklet/x");
+  });
+
+  it("previewCommit / restoreCommit refuse a commit that isn't part of the current change", async () => {
+    const { branch: other } = await startBranch(dir, { base: "main", prefix: "tweaklet/", idea: "other", token: "" });
+    writeFileSync(join(dir, "secret.txt"), "other change\n"); await checkpoint(dir, "other work", { name: "T", email: "t@x.com" });
+    const foreign = git("rev-parse", other);
+    await startBranch(dir, { base: "main", prefix: "tweaklet/", idea: "mine", token: "" });
+    writeFileSync(join(dir, "mine.txt"), "mine\n"); await checkpoint(dir, "my work", { name: "T", email: "t@x.com" });
+    const tip = git("rev-parse", "HEAD");
+
+    await expect(previewCommit(dir, foreign)).rejects.toThrow(/not a save/);
+    await expect(restoreCommit(dir, "tweaklet/mine", foreign, { name: "T", email: "t@x.com" })).rejects.toThrow(/not a save/);
+    expect(await currentBranch(dir)).toBe("tweaklet/mine");
+    expect(git("rev-parse", "HEAD")).toBe(tip);
+    expect(existsSync(join(dir, "secret.txt"))).toBe(false);
+  });
+
+  it("a ref that is also a file name is always read as a ref", async () => {
+    const { branch } = await startBranch(dir, { base: "main", prefix: "tweaklet/", idea: "x", token: "" });
+    writeFileSync(join(dir, "main"), "a file named like the base\n");
+    await checkpoint(dir, "add file main", { name: "T", email: "t@x.com" });
+    await exitPreview(dir, "main");
+    expect(await currentBranch(dir)).toBe("main");
+    await exitPreview(dir, branch);
+    expect(await currentBranch(dir)).toBe(branch);
   });
 
   it("isDirty reflects uncommitted changes", async () => {
@@ -213,6 +287,23 @@ describe("syncBase / syncIntoBranch", () => {
     // Nothing merged; the working file is untouched and origin's file absent.
     expect(readFileSync(join(clone, "dirty.txt"), "utf8")).toBe("uncommitted\n");
     expect(existsSync(join(clone, "upstream.txt"))).toBe(false);
+  });
+
+  it("never exposes the token to the repo's own hooks during fetch or merge", async () => {
+    // Hooks a repo could ship (husky-style): each logs the token it can see.
+    const log = join(clone, ".git", "hook-log");
+    for (const h of ["reference-transaction", "post-merge", "post-checkout"]) {
+      writeFileSync(join(clone, ".git", "hooks", h), `#!/bin/sh\necho "${h}:\${TWEAKLET_GIT_TOKEN:-none}" >> "${log}"\n`, { mode: 0o755 });
+    }
+    await startBranch(clone, { base: "main", prefix: "tweaklet/", idea: "x", token: "sekret" });
+    writeFileSync(join(clone, "feature.txt"), "mine\n");
+    await checkpoint(clone, "my work", { name: "T", email: "t@t.dev" });
+    commitFileOnOrigin("upstream.txt", "theirs\n", "origin advances");
+    expect(await syncIntoBranch(clone, "main", "sekret")).toEqual({ status: "updated" });
+    await syncBase(clone, "main", "sekret");
+    const seen = existsSync(log) ? readFileSync(log, "utf8") : "";
+    expect(seen).toMatch(/post-merge:none/); // hooks did run for the local merge…
+    expect(seen).not.toContain("sekret");     // …but never with the token
   });
 
   it("syncIntoBranch surfaces a conflict and leaves a CLEAN, non-conflicted tree", async () => {
@@ -417,5 +508,18 @@ describe("branch workspace", () => {
     await save("m.txt", "m");
     const [b] = await listBranches(clone, opts);
     expect(b.owner).toBe("alice");
+  });
+
+  it("changedFiles lists every path a change touches, including deletions and both sides of a rename", async () => {
+    writeFileSync(join(clone, "keep.txt"), "k\n");
+    writeFileSync(join(clone, "old.txt"), "o\n");
+    g(clone, "add", "-A"); g(clone, "commit", "-q", "-m", "files"); g(clone, "push", "-q", "origin", "main");
+    await start("Touch files");
+    rmSync(join(clone, "keep.txt"));
+    g(clone, "mv", "old.txt", "renamed.txt");
+    writeFileSync(join(clone, "src.txt"), "s\n");
+    await save("src.txt", "s");
+    const files = (await changedFiles(clone, "main")).sort();
+    expect(files).toEqual(["keep.txt", "old.txt", "renamed.txt", "src.txt"]);
   });
 });

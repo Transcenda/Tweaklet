@@ -1,12 +1,11 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { assertSafeRef } from "./validate.js";
-import { tokenGitEnv } from "./token-git.js";
+import { assertSafeRef, assertSha } from "./validate.js";
+import { authGit } from "./token-git.js";
 
 const pexec = promisify(execFile);
 
-/** Run git with an optional extra env (merged over process.env). Used for
- *  authenticated remote operations via {@link tokenGitEnv}. */
+/** Run git with an optional extra env (merged over process.env). */
 async function gitEnv(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
   const { stdout } = await pexec("git", args, { cwd, env: env ? { ...process.env, ...env } : undefined });
   return stdout.trim();
@@ -16,13 +15,33 @@ async function git(cwd: string, args: string[]): Promise<string> {
   return gitEnv(cwd, args);
 }
 
+/** An authenticated (network) git call: hardened argv + host-scoped token env
+ *  via {@link authGit}. Only fetch/push go through here — local operations
+ *  (merge, checkout, commit) run repo hooks and must never see the token. */
+async function gitAuth(cwd: string, args: string[], token: string, host?: string): Promise<string> {
+  const a = authGit(args, token, host);
+  return gitEnv(cwd, a.args, a.env);
+}
+
+/** `git fetch origin <base>`: with the user's token (hardened, https only) when
+ *  we have one, otherwise with the host's own git setup — never prompting. */
+async function fetchOrigin(cwd: string, base: string, token: string, host?: string, quiet = false): Promise<void> {
+  const args = ["fetch", ...(quiet ? ["--quiet"] : []), "origin", base];
+  if (token) await gitAuth(cwd, args, token, host);
+  else await gitEnv(cwd, args, { GIT_TERMINAL_PROMPT: "0" });
+}
+
+// Linear-time: no `-+$` (polynomial backtracking on long dash runs). After the
+// first replace there are no consecutive dashes, so single-dash trims suffice;
+// the last trim drops a dash that truncation may leave at the end.
 export function slugify(s: string): string {
   return (
     s
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 50) || "idea"
+      .replace(/^-|-$/g, "")
+      .slice(0, 50)
+      .replace(/-$/, "") || "idea"
   );
 }
 
@@ -33,18 +52,18 @@ export async function currentBranch(cwd: string): Promise<string> {
 /**
  * Best-effort refresh of the LOCAL base branch from origin, so a new change is
  * cut from a fresh tree (the working clone otherwise drifts behind origin/main
- * and inherits a stale base). Authenticated via {@link tokenGitEnv}.
+ * and inherits a stale base). Authenticated via {@link authGit}.
  *
  * Intentionally NEVER throws: if origin is unreachable (offline / no remote /
  * auth failure) we log a concise warning and return, letting the caller fall
  * back to the (possibly stale) local base. Freshness is best-effort, not a hard
  * dependency — failing here must not block starting a change.
  */
-export async function syncBase(cwd: string, base: string, token: string): Promise<void> {
+export async function syncBase(cwd: string, base: string, token: string, gitHost?: string): Promise<void> {
   assertSafeRef(base, "base");
   try {
-    await gitEnv(cwd, ["fetch", "origin", base], tokenGitEnv(token));
-    await git(cwd, ["checkout", base]);
+    await fetchOrigin(cwd, base, token, gitHost);
+    await git(cwd, ["switch", "-q", base]);
     await git(cwd, ["merge", "--ff-only", `origin/${base}`]);
   } catch (e) {
     process.stderr.write(`tweaklet: syncBase(${base}) skipped — ${String(e).split("\n")[0]}\n`);
@@ -71,10 +90,10 @@ export interface SyncResult {
  * - On conflict, collects the conflicted paths, ABORTS the merge (never leaves a
  *   partial/conflicted tree, never auto-resolves), and returns "conflict".
  */
-export async function syncIntoBranch(cwd: string, base: string, token: string): Promise<SyncResult> {
+export async function syncIntoBranch(cwd: string, base: string, token: string, gitHost?: string): Promise<SyncResult> {
   if (await isDirty(cwd)) return { status: "dirty" };
   assertSafeRef(base, "base");
-  await gitEnv(cwd, ["fetch", "origin", base], tokenGitEnv(token));
+  await fetchOrigin(cwd, base, token, gitHost);
   // Already contains origin/<base>? Nothing to merge.
   try {
     await git(cwd, ["merge-base", "--is-ancestor", `origin/${base}`, "HEAD"]);
@@ -83,7 +102,8 @@ export async function syncIntoBranch(cwd: string, base: string, token: string): 
     // non-zero exit → not an ancestor → there is something to merge.
   }
   try {
-    await gitEnv(cwd, ["merge", "--no-edit", `origin/${base}`], tokenGitEnv(token));
+    // Local merge: no network, so no token (it would be visible to merge hooks).
+    await git(cwd, ["merge", "--no-edit", `origin/${base}`]);
     return { status: "updated" };
   } catch {
     let conflicts: string[] = [];
@@ -143,10 +163,9 @@ async function settleTree(cwd: string, o: { base: string; prefix: string; author
 
 /** Fetch origin/<base>. Uses the holder's token when we have one, the host's
  *  own git credentials otherwise; never prompts. Returns whether it worked. */
-async function fetchBase(cwd: string, base: string, token: string): Promise<boolean> {
-  const env = { ...(token ? tokenGitEnv(token) : {}), GIT_TERMINAL_PROMPT: "0" };
+async function fetchBase(cwd: string, base: string, token: string, gitHost?: string): Promise<boolean> {
   try {
-    await gitEnv(cwd, ["fetch", "--quiet", "origin", base], env);
+    await fetchOrigin(cwd, base, token, gitHost, true);
     return true;
   } catch (e) {
     process.stderr.write(`tweaklet: fetch origin/${base} failed — ${String(e).split("\n")[0]}\n`);
@@ -185,23 +204,23 @@ export interface StartResult {
  */
 export async function startBranch(
   cwd: string,
-  opts: { base: string; prefix: string; idea: string; token: string; author?: CommitAuthor; owner?: string },
+  opts: { base: string; prefix: string; idea: string; token: string; author?: CommitAuthor; owner?: string; gitHost?: string },
 ): Promise<StartResult> {
   assertSafeRef(opts.base, "base");
   await settleTree(cwd, opts);
-  const synced = await fetchBase(cwd, opts.base, opts.token);
+  const synced = await fetchBase(cwd, opts.base, opts.token, opts.gitHost);
   if (synced) {
     await rescueLocalBaseCommits(cwd, opts);
-    await git(cwd, ["checkout", "-q", "-B", opts.base, `origin/${opts.base}`]);
+    await git(cwd, ["switch", "-q", "-C", opts.base, `origin/${opts.base}`]);
   } else {
-    await git(cwd, ["checkout", "-q", opts.base]);
+    await git(cwd, ["switch", "-q", opts.base]);
   }
   await pruneEmptyBranches(cwd, opts);
   // Leading dashes stripped so the title can never read as a `git config` flag.
   const title = opts.idea.trim().replace(/\s+/g, " ").replace(/^-+\s*/, "").slice(0, 120) || "New change";
   const branch = await uniqueBranchName(cwd, `${opts.prefix}${slugify(title)}`);
   assertSafeRef(branch, "branch");
-  await git(cwd, ["checkout", "-q", "-b", branch]);
+  await git(cwd, ["switch", "-q", "-c", branch]);
   await git(cwd, ["config", `branch.${branch}.description`, title]);
   if (opts.owner) await git(cwd, ["config", `branch.${branch}.tweakletOwner`, opts.owner]);
   return { branch, title, synced };
@@ -308,7 +327,7 @@ export async function switchBranch(
   if (branch !== o.base && !isChangeBranch(branch, o)) throw new Error(`"${branch}" is not a Tweaklet change`);
   if (!(await branchExists(cwd, branch))) throw new Error(`no such change: ${branch}`);
   await settleTree(cwd, o);
-  await git(cwd, ["checkout", "-q", branch]);
+  await git(cwd, ["switch", "-q", branch]);
 }
 
 /** Delete a change for good. Deleting the current change discards its edits
@@ -320,7 +339,7 @@ export async function deleteBranch(cwd: string, branch: string, o: { base: strin
   if ((await currentBranch(cwd)) === branch) {
     await git(cwd, ["reset", "-q", "--hard", "HEAD"]);
     await git(cwd, ["clean", "-fdq"]);
-    await git(cwd, ["checkout", "-q", o.base]);
+    await git(cwd, ["switch", "-q", o.base]);
   }
   await git(cwd, ["branch", "-q", "-D", branch]);
 }
@@ -350,7 +369,7 @@ export async function reject(
   // Wipe uncommitted + untracked so the checkout can't be blocked.
   await git(cwd, ["reset", "--hard", "HEAD"]);
   await git(cwd, ["clean", "-fd"]);
-  await git(cwd, ["checkout", opts.base]);
+  await git(cwd, ["switch", "-q", opts.base]);
   // Drop the abandoned sandbox branch — guarded to a prefixed, non-base branch.
   if (branch !== opts.base && opts.prefix && branch.startsWith(opts.prefix)) {
     await git(cwd, ["branch", "-D", branch]);
@@ -377,21 +396,54 @@ export async function branchState(cwd: string, base: string): Promise<BranchStat
   return { branch, base, onFeature, commits };
 }
 
+/** Every path a change touches relative to where it left `base` — added,
+ *  modified, deleted, and both sides of a rename. Used to refuse a PR that
+ *  reaches outside the guardrails. */
+export async function changedFiles(cwd: string, base: string): Promise<string[]> {
+  assertSafeRef(base, "base");
+  const out = await git(cwd, ["diff", "--no-renames", "--name-only", "-z", `${base}...HEAD`, "--"]);
+  return out.split("\0").filter(Boolean);
+}
+
 export async function isDirty(cwd: string): Promise<boolean> {
   return (await git(cwd, ["status", "--porcelain"])).length > 0;
 }
 
+/**
+ * Resolve a commit id from a request to a full sha, refusing anything that is
+ * not a commit reachable from `tip` (a save on the current change or its base).
+ * Stops a request from previewing/restoring arbitrary objects, e.g. another
+ * user's change.
+ */
+async function resolveSave(cwd: string, sha: string, tip: string): Promise<string> {
+  assertSha(sha);
+  let full: string;
+  try {
+    full = await git(cwd, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${sha}^{commit}`]);
+  } catch {
+    throw new Error(`not a save on this change: ${sha}`);
+  }
+  try {
+    await git(cwd, ["merge-base", "--is-ancestor", "--end-of-options", full, tip]);
+  } catch {
+    throw new Error(`not a save on this change: ${sha}`);
+  }
+  return full;
+}
+
 /** Show an older commit's exact tree in the working dir (detached HEAD) without
- *  moving the branch. Requires a clean tree (caller enforces "Save first"). */
-export async function previewCommit(cwd: string, sha: string): Promise<void> {
-  assertSafeRef(sha, "sha");
-  await git(cwd, ["checkout", sha]);
+ *  moving the branch. Requires a clean tree (caller enforces "Save first").
+ *  `sha` must be a save on `branch` (default: the current HEAD). */
+export async function previewCommit(cwd: string, sha: string, branch?: string): Promise<void> {
+  if (branch !== undefined) assertSafeRef(branch, "branch");
+  const full = await resolveSave(cwd, sha, branch ? `refs/heads/${branch}` : "HEAD");
+  await git(cwd, ["switch", "-q", "--detach", full]);
 }
 
 /** Leave preview: re-attach to the branch tip. */
 export async function exitPreview(cwd: string, branch: string): Promise<void> {
   assertSafeRef(branch, "branch");
-  await git(cwd, ["checkout", branch]);
+  await git(cwd, ["switch", "-q", branch]);
 }
 
 /** Non-destructive restore: add a NEW commit on `branch` whose tree equals `sha`.
@@ -400,9 +452,9 @@ export async function exitPreview(cwd: string, branch: string): Promise<void> {
  *  tip, preserving all existing history. */
 export async function restoreCommit(cwd: string, branch: string, sha: string, author: CommitAuthor): Promise<void> {
   assertSafeRef(branch, "branch");
-  assertSafeRef(sha, "sha");
-  await git(cwd, ["checkout", branch]);
-  await git(cwd, ["read-tree", "-u", "--reset", sha]);
-  const subject = await git(cwd, ["log", "-1", "--format=%s", sha]);
+  const full = await resolveSave(cwd, sha, `refs/heads/${branch}`);
+  await git(cwd, ["switch", "-q", branch]);
+  await git(cwd, ["read-tree", "-u", "--reset", full]);
+  const subject = await git(cwd, ["log", "-1", "--format=%s", full, "--"]);
   await git(cwd, ["-c", `user.name=${author.name}`, "-c", `user.email=${author.email}`, "commit", "-m", `Restore to "${subject}"`]);
 }

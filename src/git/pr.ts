@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { assertSafeRef } from "./validate.js";
+import { assertSafeRef, redactUrlCredentials } from "./validate.js";
 import { parseRepoRef } from "../repo/clone.js";
-import { tokenGitEnv } from "./token-git.js";
+import { authGit, gitHostFromApiBase } from "./token-git.js";
 
 export interface ExecResult { stdout: string; stderr: string; code: number; }
 export type Exec = (cmd: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) => Promise<ExecResult>;
@@ -16,9 +16,10 @@ const realExec: Exec = (cmd, args, cwd, env) =>
 
 export async function repoSlugFromRemote(cwd: string, exec: Exec = realExec): Promise<{ owner: string; name: string }> {
   const r = await exec("git", ["-C", cwd, "remote", "get-url", "origin"], cwd);
-  if (r.code !== 0) throw new Error(`no origin remote: ${r.stderr}`);
+  // Remote URLs and git's stderr can carry `https://user:token@…`; never echo that.
+  if (r.code !== 0) throw new Error(`no origin remote: ${redactUrlCredentials(r.stderr)}`);
   const p = parseRepoRef(r.stdout.trim());
-  if (!p) throw new Error(`cannot parse origin: ${r.stdout.trim()}`);
+  if (!p) throw new Error(`cannot parse origin: ${redactUrlCredentials(r.stdout.trim())}`);
   return { owner: p.owner, name: p.name };
 }
 
@@ -30,8 +31,11 @@ export async function createDraftPr(
 ): Promise<string> {
   assertSafeRef(opts.branch, "branch");
   assertSafeRef(opts.base, "base");
-  const push = await exec("git", ["push", "-u", "origin", opts.branch], cwd, tokenGitEnv(opts.token));
-  if (push.code !== 0) throw new Error(`git push failed: ${push.stderr}`);
+  // --no-verify + hardening: the repo's own hooks (pre-push, husky) must never
+  // run with the user's token in their environment.
+  const push = authGit(["push", "--no-verify", "-u", "origin", opts.branch], opts.token, gitHostFromApiBase(opts.apiBaseUrl));
+  const pushed = await exec("git", push.args, cwd, push.env);
+  if (pushed.code !== 0) throw new Error(`git push failed: ${redactUrlCredentials(pushed.stderr)}`);
   const res = await fetchImpl(`${opts.apiBaseUrl}/repos/${opts.owner}/${opts.repo}/pulls`, {
     method: "POST",
     headers: { Authorization: `Bearer ${opts.token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
