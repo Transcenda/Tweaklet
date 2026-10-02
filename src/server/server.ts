@@ -1,5 +1,5 @@
 import express, { type Request, type Response, type NextFunction } from "express";
-import rateLimit from "express-rate-limit";
+import { rateLimit, ipKeyGenerator } from "express-rate-limit";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -89,6 +89,8 @@ export interface ServerDeps {
   fetchSessionMessages?: typeof realFetchSessionMessages;
   /** Upper bound for /agent/history, so a stuck opencode can't hang the panel. */
   historyTimeoutMs?: number;
+  /** Requests per minute: `api` per signed-in user (or client), `auth` per client. Tests lower these. */
+  rateLimit?: { api?: number; auth?: number };
 }
 
 const SESSION_COOKIE = "apz_session";
@@ -268,6 +270,26 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
 
   // Create a router for all tweaklet routes mounted under basePath
   const router = express.Router();
+
+  // ── Rate limiting ───────────────────────────────────────────────────────────
+  // Registered before every route. API calls are counted per signed-in user,
+  // because behind a reverse proxy every request arrives from 127.0.0.1, and
+  // keying by IP would make all users share one budget. Anonymous calls fall
+  // back to the client address. Sign-in routes get a tighter per-client limit.
+  // The widget bundle and bootstrap page are never limited (every page view of
+  // the host app loads them).
+  const limitMessage = { error: "too many requests — slow down and try again in a minute" };
+  const clientKey = (req: Request) => `ip:${ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? "")}`;
+  const limiterBase = { windowMs: 60_000, standardHeaders: "draft-8" as const, legacyHeaders: false, message: limitMessage };
+  router.use(["/agent", "/setup"], rateLimit({
+    ...limiterBase,
+    limit: deps.rateLimit?.api ?? 600,
+    keyGenerator: (req) => {
+      const u = currentUser(req as Request);
+      return u ? `user:${u.login.toLowerCase()}` : clientKey(req as Request);
+    },
+  }));
+  router.use("/auth", rateLimit({ ...limiterBase, limit: deps.rateLimit?.auth ?? 30, keyGenerator: (req) => clientKey(req as Request) }));
 
   // ── Setup routes ────────────────────────────────────────────────────────────
   // Only active while setup has not been completed; return 410 Gone once
@@ -837,13 +859,6 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   });
 
   // ── Change workspace: list / switch / delete Tweaklet branches ─────────────
-  const branchSwitchLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 20,
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
-
   router.get("/agent/branches", authGate, async (_req, res) => {
     if (!requireRepo(res)) return;
     try {
@@ -852,7 +867,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     } catch (e) { res.status(500).json({ error: String(e) }); }
   });
 
-  router.post("/agent/branches/switch", authGate, branchSwitchLimiter, async (req, res) => {
+  router.post("/agent/branches/switch", authGate, async (req, res) => {
     if (!requireRepo(res)) return;
     const branch = String(req.body?.branch ?? "");
     if (!branch) { res.status(400).json({ error: "no branch" }); return; }
