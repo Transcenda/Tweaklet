@@ -12,6 +12,17 @@ async function failure(path: string, res: Response): Promise<Error> {
   return new Error(detail || `${path} failed: ${res.status}`);
 }
 
+// The widget lives inside the host page, where any script can replace
+// window.fetch. lockFetch() — called once when the widget boots — keeps the
+// original so later patches (including code hot-reloaded into the page) can't
+// read or alter Tweaklet's own requests. Unit tests that never boot the widget
+// use whatever global fetch they stub.
+let lockedFetch: typeof fetch | null = null;
+export function lockFetch(): void {
+  if (!lockedFetch && typeof globalThis.fetch === "function") lockedFetch = globalThis.fetch.bind(globalThis);
+}
+const tfetch: typeof fetch = (input, init) => (lockedFetch ?? globalThis.fetch)(input, init);
+
 // The base path/origin the widget was loaded from. `embed.ts` derives it from
 // the <script src=".../widget.js"> URL at load and calls setBase() before the
 // app renders; every request below is prefixed with it. (Replaces the old
@@ -21,7 +32,7 @@ export function setBase(b: string): void { _base = b; }
 export function getBase(): string { return _base; }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
+  const res = await tfetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -32,14 +43,14 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path, { credentials: "include" });
+  const res = await tfetch(path, { credentials: "include" });
   if (!res.ok) throw await failure(path, res);
   return (await res.json()) as T;
 }
 
 export const api = {
   async me(): Promise<User | null> {
-    const res = await fetch(`${getBase()}/agent/me`, { credentials: "include" });
+    const res = await tfetch(`${getBase()}/agent/me`, { credentials: "include" });
     if (res.status === 401) return null;
     if (!res.ok) throw new Error(`/agent/me failed: ${res.status}`);
     return (await res.json()) as User;
@@ -94,7 +105,7 @@ async function setupFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   if ((init as RequestInit & { method?: string }).method === "POST") {
     headers["Content-Type"] = "application/json";
   }
-  const res = await fetch(path, { ...init, headers, credentials: "include" });
+  const res = await tfetch(path, { ...init, headers, credentials: "include" });
   if (res.status === 403) throw new SetupAuthError();
   if (!res.ok) throw new Error(`${path} failed: ${res.status}`);
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
@@ -149,7 +160,7 @@ export const setupApi = {
 export interface EndFrame { type: "end"; code: number; }
 
 export async function streamPrompt(prompt: string, onEvent: (e: any) => void): Promise<EndFrame | null> {
-  const res = await fetch(`${getBase()}/agent/prompt`, {
+  const res = await tfetch(`${getBase()}/agent/prompt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",

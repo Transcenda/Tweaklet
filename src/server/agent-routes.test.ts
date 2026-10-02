@@ -74,7 +74,22 @@ describe("POST /tweaklet/agent/prompt", () => {
     expect(captured.allow).toEqual(["frontend/src/**"]);
     expect(captured.onEvent).toBeTypeOf("function");
     expect(captured.onAsk).toBeTypeOf("function");
-    expect(captured.mode).toBeUndefined(); // mode was removed when Explore/Build fused
+    expect(captured.mode).toBe("auto"); // approvals mode (Explore/Build modes were fused long ago); OAuth configured → server decides
+  });
+
+  it("lets the server decide risky actions (auto) when GitHub sign-in is configured, and asks the person otherwise", async () => {
+    let captured: any = null;
+    const spy = async (a: any) => { captured = a; return { sessionId: "s1", blocked: [] }; };
+    const local: TweakletConfig = { ...base, github: undefined }; // no GitHub OAuth → a developer's own machine
+    await request(appWith({ runPrompt: spy }, local)).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "hi" }).expect(200);
+    expect(captured.mode).toBe("ask");
+    const shared = base; // GitHub OAuth configured → a shared server
+    await request(appWith({ runPrompt: spy }, shared)).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "hi" }).expect(200);
+    expect(captured.mode).toBe("auto");
+    expect(captured.safeCommands).toContain("npm run typecheck");
+    const optedIn: TweakletConfig = { ...shared, agent: { ...base.agent!, approvals: "ask", safeCommands: ["make check"] } };
+    await request(appWith({ runPrompt: spy }, optedIn)).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "hi" }).expect(200);
+    expect(captured).toMatchObject({ mode: "ask", safeCommands: ["make check"] });
   });
 
   it("emits a guardrail frame when runPrompt reports blocked paths", async () => {

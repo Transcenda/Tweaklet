@@ -12,7 +12,7 @@ import { createRoot } from "react-dom/client";
 // Vite returns the contents of panel.css as a string with the ?inline query.
 import cssText from "./panel.css?inline";
 import { App } from "./App.js";
-import { setBase } from "./api.js";
+import { setBase, lockFetch } from "./api.js";
 
 const ROOT_ID = "tweaklet-root";
 const DOCK_STYLE_ID = "tweaklet-dock-style";
@@ -63,6 +63,7 @@ function findScriptSrc(): string {
  * Exported for unit testing (pass a known `src`).
  */
 export function mount(src: string): void {
+  lockFetch();
   if (document.getElementById(ROOT_ID)) return;
   setBase(deriveBase(src));
   const standalone = isStandalone(src);
@@ -93,7 +94,8 @@ export function mount(src: string): void {
   // reserved right column.
   document.documentElement.appendChild(host);
 
-  const shadow = host.attachShadow({ mode: "open" });
+  // Closed: host-page scripts can't reach into the panel (e.g. to click Allow).
+  const shadow = host.attachShadow({ mode: "closed" });
 
   const style = document.createElement("style");
   style.textContent = cssText;

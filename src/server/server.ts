@@ -25,6 +25,7 @@ import { runPrompt as realRunPrompt, getServer, stopServer, smokeTestAgent as re
 import { ensureOpencodeProvider } from "../agent/provider-config.js";
 import { mountDomMcp } from "../agent/mcp-server.js";
 import { isValidMcpAuth } from "../agent/mcp-secret.js";
+import { DEFAULT_SAFE_COMMANDS } from "../agent/decide.js";
 import { makeSessionStore } from "./session-store.js";
 import type { SessionStore } from "./session-store.js";
 import { setActivePrompt, resolveDomInspect, type DomResult } from "../agent/dom-inspect.js";
@@ -286,6 +287,11 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   async function sessionKey(login: string): Promise<string> {
     if (!config.repo?.path) return login;
     try { return keyFor(login, await lc.currentBranch(config.repo.path)); } catch { return login; }
+  }
+  /** Who decides risky agent actions. A server with GitHub sign-in is shared,
+   *  so the server decides (`auto`); a developer's own machine asks the person. */
+  function approvalMode(): "auto" | "ask" {
+    return config.agent?.approvals ?? (config.github?.clientId ? "auto" : "ask");
   }
   /** Keep the live preview in step with the clone (deps + unit). Non-fatal. */
   async function syncPreview(): Promise<void> {
@@ -849,6 +855,8 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
         model: config.agent!.model!,
         prompt,
         allow: config.guardrails.allow,
+        mode: approvalMode(),
+        safeCommands: config.agent?.safeCommands ?? DEFAULT_SAFE_COMMANDS,
         onEvent: send,
         onAsk,
         signal: currentAbort.signal,

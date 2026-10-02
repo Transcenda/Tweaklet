@@ -101,6 +101,32 @@ function ToolRow({ row }: { row: Extract<Row, { kind: "tool" }> }) {
   );
 }
 
+// Say plainly what a permission request would do (ask mode).
+function approvalTitle(permission: string): string {
+  switch ((permission || "").toLowerCase()) {
+    case "bash": return "Run this command on the server?";
+    case "webfetch": return "Fetch this web page?";
+    case "websearch": return "Search the web for this?";
+    case "doom_loop": return "The agent keeps repeating the same step. Let it continue?";
+    default: return `Allow the agent to use "${permission}"?`;
+  }
+}
+
+// What the server refused on its own (auto mode), in plain words.
+function deniedText(permission: string, patterns: string[]): string {
+  const what = patterns.filter(Boolean).join(", ");
+  const kind = (permission || "").toLowerCase();
+  const action =
+    kind === "bash" ? `run \`${what || "a command"}\`` :
+    kind === "webfetch" ? `fetch ${what || "a web page"}` :
+    kind === "websearch" ? "search the web" :
+    kind === "edit" || kind === "write" || kind === "patch" ? `edit ${what || "files"} (outside the editable area)` :
+    kind === "task" ? "hand work to a sub-agent" :
+    kind === "external_directory" ? "touch files outside the project" :
+    `use "${permission}"`;
+  return `⛔ Not allowed here: ${action}. A developer needs to do this.`;
+}
+
 // A risky permission opencode is asking us to approve. Shows the command/diff and
 // Allow/Deny; once answered it collapses to a short note via onAnswer.
 function ApprovalCard({
@@ -116,7 +142,7 @@ function ApprovalCard({
         {row.answer === "approve" ? "✓ allowed" : "✕ denied"}
       </div>
     );
-  const title = row.permission === "bash" ? "Run a command" : "Action outside the UI zone";
+  const title = approvalTitle(row.permission);
   const body = (row.diff && row.diff.trim()) || (row.patterns ?? []).join("\n");
   return (
     <div className="apz-row apz-approve">
@@ -379,6 +405,7 @@ export function Panel() {
     // calls) so deltas/updates upsert the same row. The row index map lets us
     // mutate a part in place inside setRows without re-deriving order.
     const roles = new Map<string, "user" | "assistant" | string>();
+    let deniedShown = false; // per-action denial notes replace the end-of-run summary
     const partIndex = new Map<string, number>(); // partID -> index into rows
 
     // Upsert a part row by id; render only if its message role is assistant.
@@ -480,7 +507,13 @@ export function Panel() {
             void api.domResult(e.requestId, result);
             return;
           }
+          case "denied": {
+            deniedShown = true;
+            push({ kind: "note", text: deniedText(String(e.permission ?? ""), Array.isArray(e.patterns) ? e.patterns.map(String) : []) });
+            break;
+          }
           case "guardrail": {
+            if (deniedShown) break;
             const blocked = e.blocked ?? [];
             push({ kind: "note", text: `⚠ ${blocked.length} change(s) outside the UI zone were blocked: ${blocked.join(", ")}` });
             break;

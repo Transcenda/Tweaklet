@@ -1,4 +1,4 @@
-import { decidePermission } from "./decide.js";
+import { decidePermission, DEFAULT_SAFE_COMMANDS, opencodePermissionConfig, type Policy } from "./decide.js";
 
 export interface RunPromptArgs {
   client: any;                 // @opencode-ai/sdk client (injected; real one from getServer())
@@ -6,6 +6,9 @@ export interface RunPromptArgs {
   model: string;               // "google-vertex-ai/gemini-2.5-flash"
   prompt: string;
   allow: string[];
+  /** auto = Tweaklet decides risky actions (denies them); ask = the person in the panel decides. Default ask. */
+  mode?: Policy["mode"];
+  safeCommands?: string[];
   onEvent: (e: any) => void;
   onAsk: (req: { permissionID: string; permission: string; patterns: string[]; diff?: string }) => Promise<"approve" | "deny">;
   signal?: AbortSignal;
@@ -24,6 +27,7 @@ export async function runPrompt(a: RunPromptArgs): Promise<RunPromptResult> {
     sessionId = s?.data?.id ?? s?.id;
   }
   const blocked: string[] = [];
+  const policy: Policy = { allow: a.allow, mode: a.mode ?? "ask", safeCommands: a.safeCommands ?? DEFAULT_SAFE_COMMANDS };
   const events = await a.client.event.subscribe();
   if (a.signal) {
     a.signal.addEventListener("abort", () => { a.client.session.abort({ path: { id: sessionId } }).catch(() => {}); }, { once: true });
@@ -33,13 +37,22 @@ export async function runPrompt(a: RunPromptArgs): Promise<RunPromptResult> {
     for await (const ev of events.stream) {
       const t = ev?.type;
       const p = ev?.properties ?? {};
+      if (t === "permission.asked" && p.sessionID && p.sessionID !== sessionId) {
+        // A request from another session (e.g. a subagent) — nothing supervises
+        // it, so fail closed rather than leaving it hanging.
+        await a.client.postSessionIdPermissionsPermissionId({ path: { id: p.sessionID, permissionID: p.id }, body: { response: "reject" } }).catch(() => {});
+        continue;
+      }
       if (p.sessionID && p.sessionID !== sessionId) continue;
       if (t === "permission.asked") {
-        const decision = decidePermission(p, a.allow);
+        const decision = decidePermission(p, policy);
         let response: "once" | "reject";
         if (decision === "approve") response = "once";
-        else if (decision === "deny") { response = "reject"; if (Array.isArray(p.patterns)) blocked.push(...p.patterns); }
-        else {
+        else if (decision === "deny") {
+          response = "reject";
+          if (Array.isArray(p.patterns)) blocked.push(...p.patterns);
+          a.onEvent({ type: "denied", permission: p.permission, patterns: p.patterns ?? [], raw: {} });
+        } else {
           const r = await a.onAsk({ permissionID: p.id, permission: p.permission, patterns: p.patterns ?? [], diff: p?.metadata?.diff });
           response = r === "approve" ? "once" : "reject";
           if (r !== "approve" && Array.isArray(p.patterns)) blocked.push(...p.patterns);
@@ -137,7 +150,9 @@ export async function getServer(projectDir?: string): Promise<{ client: any; ser
       // afterwards so nothing else in the service is affected (the child keeps the
       // cwd it was forked with).
       process.chdir(target);
-      _oc = await createOpencode();
+      // Force every tool use through Tweaklet's permission policy, whatever the
+      // host repo's own opencode config says (inline config wins).
+      _oc = await createOpencode({ config: opencodePermissionConfig() as any });
       _ocDir = target;
     } finally {
       process.chdir(prev);

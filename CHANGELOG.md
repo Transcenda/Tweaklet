@@ -40,6 +40,18 @@ tarball (`tweaklet-server.tgz`); install/upgrade with
     `Secure` and scoped to the base path.
   - API and sign-in routes are rate-limited.
   - Dependencies audit clean.
+- **Auto approvals on shared servers.**
+  - Tweaklet now launches opencode so it asks before every tool use. A host
+    repo's own opencode config can't loosen this.
+  - On servers with GitHub sign-in, Tweaklet decides everything itself:
+    reads, edits inside the guardrails, and an exact-match safe-command list
+    (read-only git, typecheck, lint) are allowed; other commands and web
+    access are denied and explained in the panel.
+  - Ask mode (an Allow/Deny prompt for risky actions) remains the default for
+    a developer's own machine. Configure with `agent.approvals` and
+    `agent.safeCommands`.
+  - Sub-agents and access outside the repo are always denied.
+  - The panel mounts in a closed shadow root and keeps its own `fetch`.
 - **Requires the current Node LTS (24+).** Only the current LTS line is supported now (`engines: >=24`). Node 20 reached end-of-life in April 2026. The doctor reports older Node as a failure with an upgrade hint, so upgrade the host's Node before installing this release.
 - `@opencode-ai/sdk` 1.18.34. Install `opencode-ai@1.18.34` on the host to match.
 - Design: [`docs/specs/2026-10-01-branch-workspace-design.md`](docs/specs/2026-10-01-branch-workspace-design.md).

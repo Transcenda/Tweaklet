@@ -63,18 +63,37 @@ starts with a status line saying how current it is.
 
 ## Agent guardrails
 
-opencode asks for permission before every tool use. Tweaklet answers each
-request (`src/agent/decide.ts`):
+Tweaklet launches opencode with an inline config that makes it **ask before
+every tool use**. Inline config overrides the host repo's own `opencode.json`
+and `.opencode/` agents, so a repository can't loosen this. Tweaklet answers
+each request itself (`src/agent/decide.ts`):
 
-| Request | Decision |
-| --- | --- |
-| edit/write inside `guardrails.allow` globs | approved automatically |
-| edit/write outside the allowlist | **denied before it happens** |
-| anything else (shell commands, …) | the user decides in the panel (Allow / Deny) |
+| Request | Auto mode (default on shared servers) | Ask mode (default locally) |
+| --- | --- | --- |
+| read, search, list, LSP, todos | allowed | allowed |
+| edit inside `guardrails.allow` | allowed | allowed |
+| edit outside it, or with no paths | **denied** | **denied** |
+| sub-agents (`task`), files outside the repo | **denied** | **denied** |
+| shell command on `agent.safeCommands` (exact match, no shell operators) | allowed | allowed |
+| any other shell command, web fetch/search, anything new | **denied**, explained in the panel | the person decides (Allow / Deny) |
+
+**Why auto on shared servers:** the panel runs inside the host page, and any
+script there could click Allow, including code the agent itself writes and
+hot-reloads. Same-origin JavaScript can't prove a human pressed the button, so
+on a server with GitHub sign-in the browser never approves risky actions; the
+server decides. Ask mode, for a developer's own machine, is the default when
+GitHub sign-in isn't configured, and can be chosen with `agent.approvals`. The
+default safe list holds read-only git, typecheck and lint. Tests are left off
+because they run test files the agent can write.
+
+As defence in depth, the panel mounts in a **closed** shadow root and keeps
+its own copy of `fetch` from boot, so ordinary page scripts can't reach into
+it or intercept its requests.
 
 Out-of-bounds edits never touch the tree, so there is nothing to revert.
 **Stop** aborts the session. The DOM-inspect MCP endpoint (`/mcp`) that lets the
-agent read the user's live page is **loopback-only**.
+agent read the user's live page needs a per-process token and a direct local
+connection.
 
 ## Change workspace
 

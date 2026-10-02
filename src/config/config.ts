@@ -53,6 +53,12 @@ export const ConfigSchema = z.object({
       vertexProject: z.string().optional(),
       vertexLocation: z.string().optional(),
       model: z.string().optional(),
+      /** Who decides risky agent actions (shell, web): "auto" = Tweaklet denies
+       *  anything off the safe list; "ask" = the person in the panel decides.
+       *  Default: auto when GitHub sign-in is configured (a shared server), else ask. */
+      approvals: z.enum(["auto", "ask"]).optional(),
+      /** Exact shell commands the agent may run without asking. Default: read-only git, typecheck, lint. */
+      safeCommands: z.array(z.string().min(1)).optional(),
     })
     .optional(),
   repo: z

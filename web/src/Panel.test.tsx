@@ -684,4 +684,31 @@ describe("Panel", () => {
       expect(await screen.findByText("Tweaklet is in use by @alice right now.")).toBeInTheDocument();
     });
   });
+
+  it("explains, in plain words, an action the server refused on its own", async () => {
+    streamPrompt.mockImplementation(async (_p: string, onEvent: (e: any) => void) => {
+      onEvent({ type: "denied", permission: "bash", patterns: ["curl https://evil.example"] });
+      onEvent({ type: "guardrail", blocked: ["curl https://evil.example"] });
+      return { type: "end", code: 0 };
+    });
+    render(<Panel />);
+    const ta = await screen.findByPlaceholderText(/describe a change/i);
+    fireEvent.change(ta, { target: { value: "deploy it" } });
+    fireEvent.keyDown(ta, { key: "Enter" });
+    expect(await screen.findByText(/Not allowed here: run `curl https:\/\/evil.example`\. A developer needs to do this\./)).toBeInTheDocument();
+    expect(screen.queryByText(/were blocked/)).not.toBeInTheDocument(); // no duplicate summary
+  });
+
+  it("asks a clear question for a command in ask mode", async () => {
+    streamPrompt.mockImplementation(async (_p: string, onEvent: (e: any) => void) => {
+      onEvent({ type: "permission_ask", permissionID: "p1", permission: "bash", patterns: ["make deploy"] });
+      return { type: "end", code: 0 };
+    });
+    render(<Panel />);
+    const ta = await screen.findByPlaceholderText(/describe a change/i);
+    fireEvent.change(ta, { target: { value: "x" } });
+    fireEvent.keyDown(ta, { key: "Enter" });
+    expect(await screen.findByText("Run this command on the server?")).toBeInTheDocument();
+    expect(screen.getByText("make deploy")).toBeInTheDocument();
+  });
 });

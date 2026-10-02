@@ -176,6 +176,22 @@ in step. Without a `preview` block, Tweaklet leaves your dev server alone.
 
 The doctor's **live preview** check reports a stopped unit.
 
+## Agent approvals
+
+By default, a server with GitHub sign-in runs the agent in **auto** mode.
+Tweaklet itself allows reads, edits inside the guardrail paths, and a short
+list of safe commands, and denies everything else with a note in the panel.
+Without GitHub sign-in (a developer's own machine), the default is **ask**:
+risky actions get an Allow/Deny prompt. Override in `~/.tweaklet/config.json`:
+
+```json
+"agent": { "approvals": "auto", "safeCommands": ["git status", "git diff", "npm run typecheck", "npm run lint"] }
+```
+
+Safe commands must match exactly, and any shell operator (`;`, `&&`, `|`, `>`,
+`$(…)`) disqualifies a command. Don't add commands that run code the agent can
+edit, such as test runners.
+
 ## Changing the base path
 
 The default is `/tweaklet`. To use a different prefix set `server.basePath` in `~/.tweaklet/config.json` and update your reverse-proxy rule to match.
