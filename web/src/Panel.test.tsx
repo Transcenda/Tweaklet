@@ -25,6 +25,7 @@ const { apiMock, streamPrompt } = vi.hoisted(() => {
     branches: vi.fn(),
     switchBranch: vi.fn(),
     deleteBranch: vi.fn(),
+    domResult: vi.fn(),
   };
   const streamPrompt = vi.fn();
   return { apiMock, streamPrompt };
@@ -70,6 +71,7 @@ beforeEach(() => {
   apiMock.branches.mockResolvedValue({ base: "main", current: "main", branches: [] });
   apiMock.switchBranch.mockResolvedValue({ branch: "main" });
   apiMock.deleteBranch.mockResolvedValue(undefined);
+  apiMock.domResult.mockResolvedValue(undefined);
   // Default: signIn resolves immediately with "signed-in".
   authMock.signIn.mockResolvedValue("signed-in");
   // Default: startPick captures the callback so tests can fire it manually.
@@ -710,5 +712,50 @@ describe("Panel", () => {
     fireEvent.keyDown(ta, { key: "Enter" });
     expect(await screen.findByText("Run this command on the server?")).toBeInTheDocument();
     expect(screen.getByText("make deploy")).toBeInTheDocument();
+  });
+
+  it("sends only the route path as page context, never the query string or hash", async () => {
+    streamPrompt.mockResolvedValue({ type: "end", code: 0 });
+    let capturedOnPicked: ((el: any) => void) | null = null;
+    pickerMocks.startPick.mockImplementation((cb) => { capturedOnPicked = cb; return () => {}; });
+    Object.defineProperty(window, "location", {
+      value: { pathname: "/reset", search: "?token=abc123secret", hash: "#access_token=zzz", href: "" },
+      writable: true,
+    });
+
+    render(<Panel />);
+    await screen.findByRole("button", { name: /alice/i });
+    fireEvent.click(screen.getByRole("button", { name: /pick an element on the page/i }));
+    act(() => {
+      capturedOnPicked!({ tag: "button", id: "go", classes: [], attrs: {}, selectorPath: "button#go", text: "Go", html: "<button>" });
+    });
+    await screen.findByText(/button#go/);
+    fireEvent.change(screen.getByPlaceholderText(/describe a change/i), { target: { value: "tweak" } });
+    fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    await waitFor(() => expect(streamPrompt).toHaveBeenCalledTimes(1));
+    const sent = streamPrompt.mock.calls[0][0] as string;
+    expect(sent).toContain("route: /reset");
+    expect(sent).not.toContain("abc123secret");
+    expect(sent).not.toContain("access_token");
+  });
+
+  it("shows a visible note each time the agent reads the page", async () => {
+    document.body.insertAdjacentHTML("beforeend", '<h2 id="dom-read-target">Prices</h2>');
+    streamPrompt.mockImplementation(async (_text: string, onEvent: (e: any) => void) => {
+      onEvent({ type: "dom_inspect", requestId: "dom_a", selector: "#dom-read-target" });
+      onEvent({ type: "dom_inspect", requestId: "dom_b", selector: "head meta" });
+      return { type: "end", code: 0 };
+    });
+
+    render(<Panel />);
+    await screen.findByRole("button", { name: /alice/i });
+    fireEvent.change(screen.getByPlaceholderText(/describe a change/i), { target: { value: "look" } });
+    fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
+
+    expect(await screen.findByText(/the agent looked at .#dom-read-target./i)).toBeInTheDocument();
+    expect(await screen.findByText(/the agent's look at .head meta. was refused/i)).toBeInTheDocument();
+    expect(apiMock.domResult).toHaveBeenCalledWith("dom_a", expect.objectContaining({ exists: true }));
+    expect(apiMock.domResult).toHaveBeenCalledWith("dom_b", expect.objectContaining({ exists: false, refused: expect.any(String) }));
+    document.getElementById("dom-read-target")?.remove();
   });
 });

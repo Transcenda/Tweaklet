@@ -32,7 +32,7 @@ vi.mock("./api.js", () => ({
 vi.mock("./SetupWizard.js", () => ({ SetupWizard: () => null }));
 vi.mock("./Panel.js", () => ({ Panel: () => null }));
 
-import { deriveBase, isStandalone, mount } from "./embed.js";
+import { deriveBase, isStandalone, mount, findScriptSrc } from "./embed.js";
 
 const realAttachShadow = HTMLElement.prototype.attachShadow;
 
@@ -161,5 +161,49 @@ describe("mount", () => {
     // The edge launcher is NOT used standalone.
     expect(shadow().querySelector(".apz-launcher")).toBeNull();
     expect(shadow().querySelector(".tweaklet-standalone-root")).not.toBeNull();
+  });
+});
+
+describe("findScriptSrc (DOM-clobbering safe)", () => {
+  const here = () => window.location.origin;
+  beforeEach(() => { document.body.innerHTML = ""; vi.spyOn(console, "warn").mockImplementation(() => {}); });
+  afterEach(() => { document.body.innerHTML = ""; vi.restoreAllMocks(); });
+
+  function addScript(src: string) {
+    const s = document.createElement("script");
+    s.setAttribute("src", src);
+    s.type = "text/plain"; // never executed by jsdom
+    document.body.appendChild(s);
+  }
+
+  it("accepts a same-origin <script> whose path ends in /widget.js", () => {
+    addScript("/tweaklet/widget.js?v=2");
+    expect(findScriptSrc()).toBe(`${here()}/tweaklet/widget.js?v=2`);
+  });
+
+  it("ignores a cross-origin widget.js script", () => {
+    addScript("https://attacker.example.com/tweaklet/widget.js");
+    expect(findScriptSrc()).toBe("");
+    expect(console.warn).toHaveBeenCalled();
+  });
+
+  it("ignores same-origin scripts that are not widget.js", () => {
+    addScript("/assets/widget.js.map");
+    addScript("/evil.js?x=/widget.js");
+    expect(findScriptSrc()).toBe("");
+  });
+
+  it("ignores clobbered document.currentScript / non-script elements named like the widget", () => {
+    document.body.innerHTML =
+      '<img name="currentScript" src="https://attacker.example.com/widget.js">' +
+      '<form name="scripts"><input name="src" value="https://attacker.example.com/widget.js"></form>' +
+      '<a id="widget" href="https://attacker.example.com/widget.js">x</a>';
+    expect(findScriptSrc()).toBe("");
+  });
+
+  it("prefers the real same-origin script even when clobbering elements are present", () => {
+    document.body.innerHTML = '<img name="currentScript" src="https://attacker.example.com/widget.js">';
+    addScript("/tweaklet/widget.js");
+    expect(findScriptSrc()).toBe(`${here()}/tweaklet/widget.js`);
   });
 });

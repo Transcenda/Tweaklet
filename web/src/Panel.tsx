@@ -304,8 +304,10 @@ export function Panel() {
   }, [user]);
   useEffect(() => { bottomRef.current?.scrollIntoView?.({ behavior: "smooth" }); }, [rows, busy]);
   // Read page context directly from the host document — no message bridge needed.
+  // Path only: query strings and hashes often carry reset tokens, OAuth codes
+  // and ids that must not go to the model.
   const getPageContext = (): PageContext => ({
-    route: window.location.pathname + window.location.search,
+    route: window.location.pathname,
     title: document.title,
   });
 
@@ -501,10 +503,18 @@ export function Panel() {
             break;
           }
           case "dom_inspect": {
-            // Plumbing frame — read the live host DOM and POST the result back.
-            // Never rendered as a visible activity row.
-            const result = inspectDom(e.selector);
+            // Read the live host DOM (redacted) and POST the result back. Every
+            // read is shown, so the user always sees what the agent looked at.
+            const selector = String(e.selector ?? "");
+            const result = inspectDom(selector);
             void api.domResult(e.requestId, result);
+            const shown = selector.length > 80 ? selector.slice(0, 79) + "…" : selector;
+            push({
+              kind: "note",
+              text: result.refused
+                ? `👁 The agent's look at “${shown}” was refused: ${result.refused}`
+                : `👁 The agent looked at “${shown}”`,
+            });
             return;
           }
           case "denied": {
