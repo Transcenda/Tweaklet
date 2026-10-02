@@ -1,7 +1,8 @@
 # Tweaklet VCS Surface — Design
 
+> **Status:** Partly superseded — the save / preview → restore / discard / submit-as-draft-PR model still holds, but "one feature branch at a time" and manual-only saves were replaced by a multi-change switcher with auto-save before HEAD moves, and routes now live under `<basePath>/agent/*`; see docs/specs/2026-10-01-branch-workspace-design.md and docs/ARCHITECTURE.md § Change workspace.
+
 **Date:** 2026-06-15
-**Status:** Approved (design) — pending spec review before implementation
 **Goal:** Give non-technical Tweaklet users a safe, legible version-control surface inside the panel: see where they are, start/discard a feature branch, save and move through a history of saved points, and submit a Pull Request to hand off to developers.
 
 ## Decisions (locked)
@@ -10,8 +11,8 @@
 |---|---|
 | Commit navigation | A **clickable timeline** of saved points (commits), newest first |
 | Restore model | **Preview (read-only) → confirm**; restoring is **non-destructive** (a new save on top — nothing is ever lost) |
-| Branch model | **One feature branch at a time** (you're on `main` or your single working branch) |
-| Saves | **Manual** ("Save" = an intentional point), not auto-commit on every agent edit |
+| Branch model | **One feature branch at a time** (you're on `main` or your single working branch) *(superseded: several changes, switchable)* |
+| Saves | **Manual** ("Save" = an intentional point), not auto-commit on every agent edit *(later: unsaved edits are also auto-saved before HEAD moves)* |
 | Branch naming | **Auto-generated from a developer-configured convention** (`repo.branchPrefix`); users never name branches |
 
 ## What the user sees
@@ -44,7 +45,7 @@ On a branch:  ● Working: "make-header-bigger"   [History] [Discard]           
 - **Restore here** snapshots that state as a *new* point at the top of the timeline (non-destructive), then returns to live editing.
 - **Back to latest** exits preview to the newest point.
 
-## Backend (`tweaklet/src/git/repo.ts` + `server.ts` + `web/src/api.ts`)
+## Backend (`src/git/repo.ts` + `src/server/server.ts` + `web/src/api.ts`)
 
 New git operations (real `git`, dependency-injected like the rest):
 
@@ -83,7 +84,7 @@ The branch convention is **configured by the developer** when they set up the Tw
 - `Panel.test.tsx`: branch bar reflects `state()`; on `main` shows "Start a change"; History lists saved points; Preview shows the banner + disables the composer; "Restore here" calls `api.restore`.
 
 ## Out of scope (YAGNI)
-- Multiple concurrent branches / a branch switcher.
+- Multiple concurrent branches / a branch switcher. *(Later added; see 2026-10-01-branch-workspace-design.md.)*
 - Editing or reordering history; squashing; per-commit diffs in the timeline (the agent stream already shows diffs).
 - Conflict resolution UI (single-user, single-branch model avoids it).
 - Auto-commit on every agent edit.

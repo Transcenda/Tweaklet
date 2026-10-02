@@ -1,5 +1,7 @@
 # Zero-config, docked panel, and branch-sync — design
 
+> **Status:** Current for zero-config (§1) and the docked panel (§2). Zero-config is a standing product principle (see AGENTS.md § Product principles). Branch-sync (§3) is superseded by the v0.0.5 change workspace, where every change starts by fetching and hard-resetting the base onto a fresh branch; see `2026-10-01-branch-workspace-design.md`.
+
 Design notes for the three features shipped after the initial open-source release
 (v0.0.2–v0.0.4). Written after implementation to capture the decisions that only
 lived in a GitHub issue and in code comments. See also `CHANGELOG.md`.
@@ -77,6 +79,10 @@ disabled (media query) and the panel falls back to an overlay; closing restores 
 width.
 
 ## 3. Branch-sync (v0.0.4)
+
+*(Superseded in v0.0.5: `startBranch` now fetches `origin/<base>` and hard-resets
+the local base itself, so `syncBase` is no longer called; `POST /agent/sync` still
+exists on the server but the panel does not use it.)*
 
 **Goal:** the working clone must not drift behind `main`. The drift's root cause was
 `startBranch` cutting each change branch off the **local** (never-refreshed) base.

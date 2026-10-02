@@ -1,6 +1,8 @@
 # tweaklet — Agent Control & Safety design
 
-> Status: approved design (2026-06-14). Sub-project: **tweaklet** (self-hosted AI sandbox). Trunk-based: lands on `main`.
+> **Status:** Partly superseded — the opencode-server + programmatic permission-answer model (allowlisted edits auto-approved, out-of-bounds edits denied, everything else asked) and Stop still hold, but Explore/Build were fused into one `assistant` agent and there is no post-run sweep; see docs/ARCHITECTURE.md § Agent guardrails.
+
+*Design date: 2026-06-14.*
 
 ## Goal
 Make tweaklet safe to hand to **non-technical users** (PMs, designers). The agent must be useful for prototyping yet **incapable** of damaging the system. Three capabilities: **two modes** (Explore/Build), **hard guardrails**, a **kill switch**, plus **session memory + steering** and a **feature cost meter**.
@@ -29,6 +31,7 @@ Make tweaklet safe to hand to **non-technical users** (PMs, designers). The agen
 opencode has first-class **primary agents** with **per-agent, path-scoped permissions**, and it **removes denied tools from the model's toolset entirely** (verified: a read-only agent literally had no write tool). So both modes and the UI-only boundary are *hard, tool-level* guarantees — not prompt-hopes. We **drop `--dangerously-skip-permissions`** (currently we run fully unrestricted) and replace it with a per-agent permission matrix.
 
 ## 1. Two modes (opencode primary agents, shipped at setup)
+*(Superseded: the two modes were later fused into a single `assistant` agent; the guardrail is the permission decision, not the mode.)*
 Defined as project files the developer installs (`<repo>/.opencode/agent/*.md`, `mode: primary`):
 - **Explore** — `permission: { edit: deny, write: deny, bash: deny, webfetch: ask }`. Read-only: explains how features work, traces the code, ideates. opencode strips edit/write tools → cannot change anything, ever.
 - **Build** — `edit` glob-scoped to the configured UI paths (`{ "<ui globs>": "allow", "*": "deny" }`), `bash` scoped (`npm`/typecheck/test allow; `git push`, `rm`, file moves outside UI → deny/ask). Creates UI features + drafts a PR.
@@ -38,13 +41,14 @@ tweaklet invokes `opencode run --agent explore|build -s <session> ...`. The pane
 ## 2. Guardrails (permission-first)
 - **Hard layer:** out-of-bounds edits are **blocked at the tool level** (opencode refuses paths outside the allow-globs). Because blocked edits *never happen*, there is nothing to revert and **no user work is lost**.
 - **Explain layer:** a prose rule in the Build agent prompt + `AGENTS.md` instructs the agent that when a request needs non-UI work (data model, migrations, jobs, infra, backend behavior, CI/build), it must **decline and explain to the user, in plain language, why** ("that needs a backend/data change — outside what I can do here; hand it to your dev team"), rather than silently failing.
-- **Safety-net sweep:** after each run, tweaklet diffs the repo for anything that slipped outside the allow-set (e.g. a file a `bash` command created). If found, it **shows the user the list and asks for explicit confirmation before discarding** — never auto-deletes (honors "don't lose sensitive changes").
+- **Safety-net sweep** *(superseded by the architecture update above: no sweep exists)*: after each run, tweaklet diffs the repo for anything that slipped outside the allow-set (e.g. a file a `bash` command created). If found, it **shows the user the list and asks for explicit confirmation before discarding** — never auto-deletes (honors "don't lose sensitive changes").
 - **Gate:** checkpoint/PR only ever stage allowed paths.
 - **Config-driven:** the allow-globs are **project-specific, set during developer setup** (default examples documented). They feed both the Build agent's `edit` permission and the AGENTS.md map.
 
 Net effect: a PM **cannot** alter the data model, migrations, background jobs, CI/CD, build pipelines, infra, or existing backend behavior. Worst case is a declined request with an explanation.
 
 ## 3. Stop / kill switch
+*(Mechanism superseded: Stop now aborts the opencode session through the server API.)*
 An `AbortController` per run; `POST /api/agent/stop` kills the `opencode` child process immediately and ends the SSE. The panel shows a **Stop** control whenever the agent works. The safety-net sweep still runs on partial output, so an interrupted run stays safe.
 
 ## 4. Sessions, memory, steering, cost
@@ -62,11 +66,12 @@ Most of setup is **not manual config** — it's the developer prompting their ow
 5. **Test & confirm (offered to the developer):** a guided self-test — `tweaklet doctor` (connections) **plus a setup verification** confirming Explore is read-only, Build edits only the allowed UI paths and is blocked outside them, the widget loads, and a sample prompt works end-to-end. The developer explicitly confirms everything works **before** handing the panel to non-technical users.
 
 ## 6. Widget robustness
+*(The launcher/iframe described here was replaced by a self-mounting Shadow-DOM widget; see 2026-06-17-pluggable-onboarding-design.md §1.)*
 - The injected snippet is **self-healing**: a `MutationObserver` re-injects the launcher/iframe if the host SPA ever removes them, so the panel is "always loaded."
 - The guardrails (UI-only) prevent the agent from ever editing the host's `index.html` / build files / tweaklet itself — which is what made the widget vanish during testing.
 
 ## Non-goals / deferred
-Live mid-run steering; a custom code index/graph (opencode's grep/glob/read + LSP suffice); MCP "query data via API" tool (a strong later add for data dashboards); multi-user concurrency on one instance. **Deployment topology / self-collision is not addressed here — tweaklet will be split into its own repository**, which removes the dogfood caveat entirely.
+Live mid-run steering; a custom code index/graph (opencode's grep/glob/read + LSP suffice); MCP "query data via API" tool (a strong later add for data dashboards); multi-user concurrency on one instance. **Deployment topology / self-collision is not addressed here — tweaklet will be split into its own repository**, which removes the self-collision caveat entirely.
 
 ## Build sequence
 1. **Modes + hard guardrails + Stop** (safety core): Explore/Build agents, permission matrix, drop skip-permissions, mode toggle, Stop button, safety-net sweep with confirm.

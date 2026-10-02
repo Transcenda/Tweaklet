@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { api, streamPrompt, getBase, type User, type DoctorCheck } from "./api.js";
-import { signIn } from "./auth.js";
+import { api, streamPrompt, getBase, type User, type DoctorCheck, type Branches, type ChangeBranch } from "./api.js";
+import { signIn, lastSignInMessage } from "./auth.js";
 import { formatContext, type PickedElement, type PageContext } from "./contextCapture.js"; // PageContext used in getPageContext return type
 import { startPick, highlightElement, clearHighlight } from "./picker.js";
 import { inspectDom } from "./dom-inspect.js";
@@ -101,6 +101,32 @@ function ToolRow({ row }: { row: Extract<Row, { kind: "tool" }> }) {
   );
 }
 
+// Say plainly what a permission request would do (ask mode).
+function approvalTitle(permission: string): string {
+  switch ((permission || "").toLowerCase()) {
+    case "bash": return "Run this command on the server?";
+    case "webfetch": return "Fetch this web page?";
+    case "websearch": return "Search the web for this?";
+    case "doom_loop": return "The agent keeps repeating the same step. Let it continue?";
+    default: return `Allow the agent to use "${permission}"?`;
+  }
+}
+
+// What the server refused on its own (auto mode), in plain words.
+function deniedText(permission: string, patterns: string[]): string {
+  const what = patterns.filter(Boolean).join(", ");
+  const kind = (permission || "").toLowerCase();
+  const action =
+    kind === "bash" ? `run \`${what || "a command"}\`` :
+    kind === "webfetch" ? `fetch ${what || "a web page"}` :
+    kind === "websearch" ? "search the web" :
+    kind === "edit" || kind === "write" || kind === "patch" ? `edit ${what || "files"} (outside the editable area)` :
+    kind === "task" ? "hand work to a sub-agent" :
+    kind === "external_directory" ? "touch files outside the project" :
+    `use "${permission}"`;
+  return `⛔ Not allowed here: ${action}. A developer needs to do this.`;
+}
+
 // A risky permission opencode is asking us to approve. Shows the command/diff and
 // Allow/Deny; once answered it collapses to a short note via onAnswer.
 function ApprovalCard({
@@ -116,7 +142,7 @@ function ApprovalCard({
         {row.answer === "approve" ? "✓ allowed" : "✕ denied"}
       </div>
     );
-  const title = row.permission === "bash" ? "Run a command" : "Action outside the UI zone";
+  const title = approvalTitle(row.permission);
   const body = (row.diff && row.diff.trim()) || (row.patterns ?? []).join("\n");
   return (
     <div className="apz-row apz-approve">
@@ -126,6 +152,70 @@ function ApprovalCard({
         <button className="apz-approve-allow" onClick={() => onAnswer(row.id, "approve")}>Allow</button>
         <button className="apz-approve-deny" onClick={() => onAnswer(row.id, "deny")}>Deny</button>
       </div>
+    </div>
+  );
+}
+
+// Map re-hydrated opencode events (GET /agent/history) to rendered rows.
+function historyRows(events: any[]): Row[] {
+  return events.flatMap((e: any): Row[] => {
+    if (e.type === "message") {
+      if (e.role === "user") return [{ kind: "you", text: String(e.text ?? "") }];
+      if (e.role === "assistant") return [{ kind: "assistant", text: String(e.text ?? "") }];
+    }
+    if (e.type === "tool") return [{ kind: "tool", name: String(e.name ?? "tool"), detail: e.detail, input: e.input, output: e.output, diff: e.diff }];
+    if (e.type === "note") return [{ kind: "note", text: String(e.text ?? "") }];
+    if (e.type === "error") return [{ kind: "error", text: String(e.text ?? "") }];
+    return [];
+  });
+}
+
+function savesLabel(n: number): string { return n === 0 ? "no saves yet" : n === 1 ? "1 save" : `${n} saves`; }
+
+// The change switcher: every change in progress, one click to switch, a bin to
+// delete, and a way back to the live app. Switching never loses work — the
+// server auto-saves the current change's unsaved edits first.
+function ChangeSwitcher({
+  branches, base, me, onFeature, busy, onSwitch, onDelete, onNew, onClose,
+}: {
+  branches: ChangeBranch[]; base: string; me: string; onFeature: boolean; busy: boolean;
+  onSwitch: (b: string) => void; onDelete: (b: ChangeBranch) => void; onNew: () => void; onClose: () => void;
+}) {
+  return (
+    <div className="apz-switcher" role="menu" aria-label="Your changes" onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}>
+      <button type="button" role="menuitem" className={"apz-change apz-change--live" + (!onFeature ? " is-current" : "")} disabled={busy || !onFeature} onClick={() => onSwitch(base)}>
+        <span className="apz-change-dot apz-change-dot--live" />
+        <span className="apz-change-main">
+          <span className="apz-change-title">Live app</span>
+          <span className="apz-change-meta">{base} · no changes</span>
+        </span>
+      </button>
+      <div className="apz-switcher-head">
+        {branches.length === 0 ? "No changes in progress" : `In progress · ${branches.length}`}
+      </div>
+      {branches.length === 0 ? (
+        <div className="apz-switcher-empty">Describe a change below and Tweaklet starts one on a fresh copy of {base}.</div>
+      ) : branches.map((b) => {
+        const someoneElse = !!b.owner && b.owner.toLowerCase() !== me.toLowerCase();
+        return (
+        <div key={b.name} className={"apz-change-row" + (b.current ? " is-current" : "")}>
+          <button type="button" role="menuitem" className="apz-change" disabled={busy || b.current} onClick={() => onSwitch(b.name)} title={b.name}>
+            <span className="apz-change-dot" />
+            <span className="apz-change-main">
+              <span className="apz-change-title">{b.title}</span>
+              <span className="apz-change-meta">
+                {savesLabel(b.saves)} · {b.updated}{someoneElse && ` · @${b.owner}`}
+                {b.dirty && <span className="apz-change-tag">unsaved</span>}
+              </span>
+            </span>
+          </button>
+          {!someoneElse && (
+            <button type="button" className="apz-change-del" aria-label={`Delete ${b.title}`} title="Delete this change" disabled={busy} onClick={() => onDelete(b)}>✕</button>
+          )}
+        </div>
+        );
+      })}
+      <button type="button" role="menuitem" className="apz-switcher-new" disabled={busy} onClick={onNew}>+ New change</button>
     </div>
   );
 }
@@ -162,11 +252,12 @@ export function Panel() {
   const [prompt, setPrompt] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
   const [busy, setBusy] = useState(false);
+  // `running` = an agent turn is streaming (Stop applies); `busy` also covers
+  // quick git operations (switch / start / save), which show a quieter hint.
+  const [running, setRunning] = useState(false);
   const [prUrl, setPrUrl] = useState<string | null>(null);
   const [checks, setChecks] = useState<DoctorCheck[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [started, setStarted] = useState(false);
-  const [checkpointed, setCheckpointed] = useState(false);
   const [cost, setCost] = useState(0);
   const [tokens, setTokens] = useState(0);
   const [picked, setPicked] = useState<(PickedElement & { pickId: number })[]>([]);
@@ -177,14 +268,28 @@ export function Panel() {
   const sentRef = useRef(false);
   const [vcs, setVcs] = useState<Awaited<ReturnType<typeof api.state>> | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const refreshState = () => api.state().then(setVcs).catch(() => {});
+  const [branches, setBranches] = useState<Branches | null>(null);
+  const [switchOpen, setSwitchOpen] = useState(false);
+  const refreshState = () => Promise.all([
+    api.state().then(setVcs).catch(() => {}),
+    api.branches().then(setBranches).catch(() => {}),
+  ]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const [repoState, setRepoState] = useState<{ allowlist: string[]; cloned: boolean } | null>(null);
   const [cloning, setCloning] = useState(false);
   const [cloneErr, setCloneErr] = useState("");
 
+  const [signInNote, setSignInNote] = useState("");
   useEffect(() => { api.me().then(setUser).catch(() => setUser(null)); }, []);
+  // On the sign-in screen, say up front if a teammate is using Tweaklet.
+  useEffect(() => {
+    if (user !== null) return;
+    api.authStatus().then((s) => {
+      if (s.inUse) setSignInNote(`Tweaklet is in use by a teammate right now. It frees up when they sign out, or after ${s.idleMinutes} minutes of inactivity${s.freeInMinutes !== undefined ? ` (about ${s.freeInMinutes} min from now)` : ""}.`);
+      else setSignInNote("");
+    }).catch(() => {});
+  }, [user]);
   useEffect(() => { if (user) api.doctor().then((d) => setChecks(d.checks)).catch(() => {}); }, [user]);
   useEffect(() => { if (user) refreshState(); }, [user]);
   useEffect(() => { if (user) api.repos().then(setRepoState).catch(() => {}); }, [user]);
@@ -194,25 +299,15 @@ export function Panel() {
       if (!events.length) return;
       // Only seed when the log is empty and no prompt has been sent — never clobber an active conversation.
       if (sentRef.current) return;
-      setRows((current) => {
-        if (current.length > 0) return current;
-        return events.flatMap((e: any): Row[] => {
-          if (e.type === "message") {
-            if (e.role === "user") return [{ kind: "you", text: String(e.text ?? "") }];
-            if (e.role === "assistant") return [{ kind: "assistant", text: String(e.text ?? "") }];
-          }
-          if (e.type === "tool") return [{ kind: "tool", name: String(e.name ?? "tool"), detail: e.detail, input: e.input, output: e.output, diff: e.diff }];
-          if (e.type === "note") return [{ kind: "note", text: String(e.text ?? "") }];
-          if (e.type === "error") return [{ kind: "error", text: String(e.text ?? "") }];
-          return [];
-        });
-      });
+      setRows((current) => (current.length > 0 ? current : historyRows(events)));
     }).catch(() => {});
   }, [user]);
   useEffect(() => { bottomRef.current?.scrollIntoView?.({ behavior: "smooth" }); }, [rows, busy]);
   // Read page context directly from the host document — no message bridge needed.
+  // Path only: query strings and hashes often carry reset tokens, OAuth codes
+  // and ids that must not go to the model.
   const getPageContext = (): PageContext => ({
-    route: window.location.pathname + window.location.search,
+    route: window.location.pathname,
     title: document.title,
   });
 
@@ -232,11 +327,14 @@ export function Panel() {
               if (result === "signed-in") {
                 const u = await api.me();
                 setUser(u);
+              } else if (result === "denied") {
+                setSignInNote(lastSignInMessage());
               }
             }}
           >
             Continue with GitHub
           </button>
+          {signInNote && <p className="apz-signin-note" role="status">{signInNote}</p>}
         </div>
       </div>
     );
@@ -299,7 +397,7 @@ export function Panel() {
     if (!text || busy) return;
     sentRef.current = true;
     setBusy(true);
-    setStarted(true);
+    setRunning(true);
     push({ kind: "you", text });
     setPrompt("");
     if (taRef.current) taRef.current.style.height = "auto";
@@ -309,6 +407,7 @@ export function Panel() {
     // calls) so deltas/updates upsert the same row. The row index map lets us
     // mutate a part in place inside setRows without re-deriving order.
     const roles = new Map<string, "user" | "assistant" | string>();
+    let deniedShown = false; // per-action denial notes replace the end-of-run summary
     const partIndex = new Map<string, number>(); // partID -> index into rows
 
     // Upsert a part row by id; render only if its message role is assistant.
@@ -386,6 +485,13 @@ export function Panel() {
             }
             break;
           }
+          case "branch": {
+            // The server started a fresh change for this prompt (we were on the base).
+            push({ kind: "note", text: `◆ Started “${e.title}” on a fresh copy of ${vcs?.base ?? "main"}` });
+            if (e.synced === false) push({ kind: "note", text: "⚠ Couldn't fetch the latest version — this change starts from the last one Tweaklet saw. Reconnect GitHub to refresh." });
+            void refreshState();
+            break;
+          }
           case "permission_ask": {
             push({
               kind: "approval",
@@ -397,13 +503,27 @@ export function Panel() {
             break;
           }
           case "dom_inspect": {
-            // Plumbing frame — read the live host DOM and POST the result back.
-            // Never rendered as a visible activity row.
-            const result = inspectDom(e.selector);
+            // Read the live host DOM (redacted) and POST the result back. Every
+            // read is shown, so the user always sees what the agent looked at.
+            const selector = String(e.selector ?? "");
+            const result = inspectDom(selector);
             void api.domResult(e.requestId, result);
+            const shown = selector.length > 80 ? selector.slice(0, 79) + "…" : selector;
+            push({
+              kind: "note",
+              text: result.refused
+                ? `👁 The agent's look at “${shown}” was refused: ${result.refused}`
+                : `👁 The agent looked at “${shown}”`,
+            });
             return;
           }
+          case "denied": {
+            deniedShown = true;
+            push({ kind: "note", text: deniedText(String(e.permission ?? ""), Array.isArray(e.patterns) ? e.patterns.map(String) : []) });
+            break;
+          }
           case "guardrail": {
+            if (deniedShown) break;
             const blocked = e.blocked ?? [];
             push({ kind: "note", text: `⚠ ${blocked.length} change(s) outside the UI zone were blocked: ${blocked.join(", ")}` });
             break;
@@ -419,6 +539,7 @@ export function Panel() {
       push({ kind: "error", text: String(err) });
     } finally {
       setBusy(false);
+      setRunning(false);
       taRef.current?.focus();
       void refreshState();
     }
@@ -454,13 +575,12 @@ export function Panel() {
 
   async function rejectChanges() {
     if (busy) return;
-    if (!window.confirm("Reject the agent's changes and return to main? This discards everything from this session.")) return;
+    const base = vcs?.base ?? "main";
+    if (!window.confirm(`Discard this change and return to the live app? Everything in it — saved and unsaved — is deleted.`)) return;
     setBusy(true);
     try {
       await api.reject();
-      setRows([{ kind: "note", text: "✕ Rejected — discarded the changes and returned to main." }]);
-      setStarted(false);
-      setCheckpointed(false);
+      setRows([{ kind: "note", text: `✕ Discarded — back on the live app (${base}).` }]);
       setPrUrl(null);
       void refreshState();
     } catch (e) {
@@ -470,39 +590,128 @@ export function Panel() {
     }
   }
 
+  // Recovery: the app stopped responding after an edit → throw away the unsaved
+  // edits (the agent's latest work). Saved points and the change itself stay.
   async function recoverRevert() {
-    await rejectChanges();
+    if (busy) return;
+    if (!window.confirm("Undo the agent's unsaved edits? Your saved points are kept.")) return;
+    await ctl(() => api.undo(), "↩ undid the unsaved edits");
+  }
+
+  /** Load a change's own conversation after switching to it. Never blocks the
+   *  switch: the log clears at once and fills in when the agent answers. */
+  function loadConversation() {
+    setRows([]);
+    api.history()
+      .then(({ events }) => setRows((cur) => (cur.length > 0 ? cur : historyRows(events))))
+      .catch(() => {});
+  }
+
+  async function startChange() {
+    if (busy) return;
+    setSwitchOpen(false);
+    setBusy(true);
+    try {
+      const r = await api.startIdea(prompt.trim() || "New change");
+      setRows([{ kind: "note", text: `◆ Started “${r.title}” on a fresh copy of ${vcs?.base ?? "main"}` }]);
+      if (!r.synced) push({ kind: "note", text: "⚠ Couldn't fetch the latest version — this change starts from the last one Tweaklet saw. Reconnect GitHub to refresh." });
+      setPrUrl(null);
+      taRef.current?.focus();
+    } catch (e) { push({ kind: "error", text: String(e) }); }
+    finally { setBusy(false); void refreshState(); }
+  }
+
+  async function switchTo(branch: string) {
+    if (busy) return;
+    setSwitchOpen(false);
+    setBusy(true);
+    try {
+      await api.switchBranch(branch);
+      setPrUrl(null);
+      loadConversation();
+    } catch (e) { push({ kind: "error", text: String(e) }); }
+    finally { setBusy(false); void refreshState(); }
+  }
+
+  async function deleteChange(b: ChangeBranch) {
+    if (busy) return;
+    if (!window.confirm(`Delete “${b.title}”? Its saved and unsaved work is removed for good.`)) return;
+    setBusy(true);
+    try {
+      await api.deleteBranch(b.name);
+      if (b.current) { setRows([{ kind: "note", text: `✕ Deleted “${b.title}” — back on the live app.` }]); setPrUrl(null); }
+    } catch (e) { push({ kind: "error", text: String(e) }); }
+    finally { setBusy(false); void refreshState(); }
+  }
+
+  async function reconnect() {
+    const result = await signIn();
+    if (result === "signed-in") setUser(await api.me());
+    else if (result === "denied") push({ kind: "error", text: lastSignInMessage() });
   }
 
   const health = overall(checks);
-  const stage = prUrl ? 3 : checkpointed ? 2 : started ? 1 : 0;
+  const onFeature = !!vcs?.onFeature;
+  const saved = (vcs?.commits.length ?? 0) > 0;
+  const stage = prUrl ? 3 : saved ? 2 : onFeature ? 1 : 0;
+  const changeList = branches?.branches ?? [];
+  const currentChange = changeList.find((b) => b.current);
 
   async function goStage(i: number) {
     if (busy) return;
-    if (i === 0) { await ctl(() => api.startIdea(prompt || "new idea"), "◆ started a new request"); setStarted(true); }
+    if (i === 0) { await startChange(); }
     else if (i === 1) { taRef.current?.focus(); }
-    else if (i === 2) { await ctl(() => api.checkpoint(), "⚑ progress saved"); setCheckpointed(true); }
-    else { await ctl(async () => { const { url } = await api.createPr(prompt || undefined); setPrUrl(url); }, "✓ submitted for review"); }
+    else if (i === 2) { await ctl(() => api.checkpoint(), "⚑ progress saved"); }
+    else { await ctl(async () => { const { url } = await api.createPr(currentChange?.title ?? (prompt || undefined)); setPrUrl(url); }, "✓ submitted for review"); }
   }
 
   return (
     <div className="apz">
       <div className="apz-bar">
-        {vcs?.onFeature ? (
-          <>
-            <span className="apz-branch"><span className="apz-branch-dot" />{vcs.branch}</span>
-            <div className="apz-bar-actions">
-              <button type="button" className="apz-bar-btn" onClick={() => setHistoryOpen((o) => !o)}>History</button>
-              <button type="button" className="apz-reject" disabled={busy} onClick={rejectChanges}>Discard</button>
-            </div>
-          </>
+        <button
+          type="button"
+          className={"apz-switch" + (onFeature ? "" : " apz-switch--live")}
+          aria-haspopup="menu"
+          aria-expanded={switchOpen}
+          aria-label={`Your changes — ${onFeature ? currentChange?.title ?? vcs?.branch : "viewing the live app"}`}
+          onClick={() => setSwitchOpen((o) => !o)}
+        >
+          <span className={"apz-branch-dot" + (onFeature ? "" : " apz-branch-dot--live")} />
+          <span className="apz-switch-title">
+            {onFeature ? (currentChange?.title ?? vcs?.branch) : `Live app · ${vcs?.base ?? "main"}`}
+          </span>
+          {changeList.length > 0 && <span className="apz-switch-count" title={`${changeList.length} in progress`}>{changeList.length}</span>}
+          <svg className="apz-switch-caret" aria-hidden="true" viewBox="0 0 10 6" width="10" height="6"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button>
+        {onFeature ? (
+          <div className="apz-bar-actions">
+            <button type="button" className="apz-bar-btn" onClick={() => setHistoryOpen((o) => !o)}>History</button>
+            <button type="button" className="apz-reject" disabled={busy} onClick={rejectChanges}>Discard</button>
+          </div>
         ) : (
-          <>
-            <span className="apz-branch apz-branch--main">{vcs?.branch ?? "main"} · you're viewing the live app</span>
-            <button type="button" className="apz-bar-btn apz-bar-btn--primary" disabled={busy} onClick={() => goStage(0)}>Start a change</button>
-          </>
+          <button type="button" className="apz-bar-btn apz-bar-btn--primary" disabled={busy} onClick={startChange}>New change</button>
+        )}
+        {switchOpen && <div className="apz-switch-backdrop" aria-hidden="true" onClick={() => setSwitchOpen(false)} />}
+        {switchOpen && (
+          <ChangeSwitcher
+            branches={changeList}
+            base={vcs?.base ?? "main"}
+            me={user.login}
+            onFeature={onFeature}
+            busy={busy}
+            onSwitch={(b) => void switchTo(b)}
+            onDelete={(b) => void deleteChange(b)}
+            onNew={() => void startChange()}
+            onClose={() => setSwitchOpen(false)}
+          />
         )}
       </div>
+      {user.needsReauth && (
+        <div className="apz-reauth" role="status">
+          <span>GitHub connection expired — reconnect to start from the latest version and submit.</span>
+          <button type="button" className="apz-bar-btn apz-bar-btn--primary" onClick={() => void reconnect()}>Reconnect</button>
+        </div>
+      )}
       {historyOpen && vcs?.onFeature && (
         <div className="apz-history">
           {vcs.commits.length === 0 ? (
@@ -537,7 +746,7 @@ export function Panel() {
           ))}
         </div>
         <div className="apz-flow-tools">
-          <button type="button" className="apz-icon" aria-label="App not responding? Revert the last change" title="App not responding? Revert the last change" onClick={recoverRevert}>↩</button>
+          <button type="button" className="apz-icon" aria-label="App not responding? Undo the unsaved edits" title="App not responding? Undo the unsaved edits" disabled={busy || !onFeature} onClick={recoverRevert}>↩</button>
           <button type="button" className="apz-icon" aria-label="Refresh app" title="Refresh app" disabled={busy} onClick={() => ctl(() => api.refresh(), "↻ refreshed")}>↻</button>
           <button
             type="button"
@@ -619,7 +828,9 @@ export function Panel() {
         {busy && (
           <div className="apz-working">
             <div className="apz-run" aria-label="working"><i /><i /><i /></div>
-            <button className="apz-stop" aria-label="Stop" onClick={() => { void api.stop(); }}>Stop</button>
+            {running
+              ? <button className="apz-stop" aria-label="Stop" onClick={() => { void api.stop(); }}>Stop</button>
+              : <span className="apz-working-hint">One moment…</span>}
           </div>
         )}
         {prUrl && (

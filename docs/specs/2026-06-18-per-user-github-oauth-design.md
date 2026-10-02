@@ -1,9 +1,12 @@
 # Tweaklet — Per-user, UI-driven GitHub auth (design)
 
-**Status:** approved (design) · 2026-06-18
+> **Status:** Current — per-user OAuth with memory-only tokens, `GIT_ASKPASS` injection, per-user commit authorship and REST-created draft PRs is how Tweaklet works today (the token store is keyed by GitHub login, and an optional loopback-only `gh` CLI sign-in was added later); see docs/ARCHITECTURE.md § Identity and access.
+
+**Date:** 2026-06-18
 **Supersedes:** the operator-side `gh auth login` + `git config` setup steps and
-their doctor checks (`github cli` auth, `git identity`) introduced earlier on
-`feat/tweaklet-pluggable-onboarding`. Those become unnecessary under this model.
+their doctor checks (`github cli` auth, `git identity`) introduced earlier by the
+pluggable-onboarding work (`2026-06-17-pluggable-onboarding-design.md`). Those
+become unnecessary under this model.
 
 ## Goal
 
@@ -39,7 +42,7 @@ per-user attribution and pushes GitHub-CLI friction onto whoever runs setup.
   (`login`, `id`, `name`, `email` — `user:email` yields a usable commit email,
   falling back to the GitHub `noreply` email if the user hides it). **Store**
   `{ token, login, id, name, email }` in a **server-side in-memory session store
-  keyed by the session id**. The session cookie stays the signed, httpOnly
+  keyed by the session id** *(as built: keyed by GitHub login)*. The session cookie stays the signed, httpOnly
   `{login, id}` (as today).
 - **The token never:** goes into a cookie, is written to disk/`.git/config`, or
   is logged. Lost on server restart → the user simply signs in again (acceptable
@@ -115,7 +118,7 @@ user (the clone needs the token).
   **server-side allowlist** limits which repo Tweaklet operates on.
 - Token kept **in-memory only**; never persisted, logged, cookie-stored, or
   written to `.git/config`. Injected per-invocation via `GIT_ASKPASS`.
-- HTTPS-only (same-origin behind Caddy). Cleared on logout/restart.
+- HTTPS-only (same-origin behind the reverse proxy). Cleared on logout/restart.
 
 ## 8. Testing
 
@@ -125,10 +128,12 @@ user (the clone needs the token).
 - **Integration:** callback stores the token; clone runs with an injected exec
   carrying the token; PR posts to a mocked REST endpoint; token absent → 401-ish
   "sign in again".
-- **Manual (nexus-dev):** sign in → clone t8a as the user → tweak → PR shows the
-  user as author.
+- **Manual (a shared dev server):** sign in → clone the host app's repo as the
+  user → tweak → PR shows the user as author.
 
 ## 9. Phase 2 (still deferred)
 
 Concurrent multi-user: per-user worktrees, branch registry, session lock /
-booking, idle timeout.
+booking, idle timeout. *(Still not implemented. The booking design is
+`2026-06-19-session-booking-model-design.md`; v0.0.5 instead added per-change
+branches and a single tree lock on the one shared working tree.)*

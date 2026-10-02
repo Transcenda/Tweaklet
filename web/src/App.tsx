@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 import { Panel } from "./Panel.js";
 import { SetupWizard } from "./SetupWizard.js";
-import { setupApi, SetupAuthError, SETUP_TOKEN_KEY } from "./api.js";
+import { setupApi, SetupAuthError, SETUP_TOKEN_KEY, getBase } from "./api.js";
 
-type AppMode = "loading" | "token-prompt" | "wizard" | "panel";
+type AppMode = "loading" | "token-prompt" | "wizard" | "not-set-up" | "panel";
 
 interface AppProps {
   // When loaded on the bare bootstrap page (…/widget.js?standalone=1) there is
@@ -21,13 +21,17 @@ export function App({ standalone = false }: AppProps = {}) {
   // setup mode the launcher is replaced by a centered card (always open).
   const [open, setOpen] = useState(false);
 
+  // Setup (and its token) only ever happens on Tweaklet's own setup page
+  // (standalone). On a host app's page the token would be typed into, and kept
+  // in the sessionStorage of, an origin full of someone else's scripts, so an
+  // embedded widget just points at the setup page instead.
   async function checkState() {
     try {
       const state = await setupApi.state();
-      setMode(state.completed ? "panel" : "wizard");
+      setMode(state.completed ? "panel" : standalone ? "wizard" : "not-set-up");
     } catch (e) {
       if (e instanceof SetupAuthError) {
-        setMode("token-prompt");
+        setMode(standalone ? "token-prompt" : "not-set-up");
       } else {
         // Any other error (including 410 = already completed) → Panel
         setMode("panel");
@@ -56,6 +60,21 @@ export function App({ standalone = false }: AppProps = {}) {
           <div className="apz-auth">
             <div className="apz-mark" />
             <p>Loading…</p>
+          </div>
+        </div>
+      );
+    }
+
+    if (mode === "not-set-up" || (!standalone && (mode === "token-prompt" || mode === "wizard"))) {
+      const setupUrl = `${getBase()}/`;
+      return (
+        <div className="apz">
+          <div className="apz-token-prompt" role="status">
+            <div className="apz-mark" />
+            <h1>Tweaklet isn't set up yet</h1>
+            <p>
+              Open <a href={setupUrl} target="_blank" rel="noopener noreferrer">{setupUrl}</a> to finish setup, then reload this page.
+            </p>
           </div>
         </div>
       );

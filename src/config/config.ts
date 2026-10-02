@@ -18,6 +18,20 @@ import {
 const gitRefName = (s: z.ZodString) =>
   s.refine((v) => !v.startsWith("-"), "must not start with '-'");
 
+/**
+ * An editable-path glob for the agent, relative to the repo. Refuses entries
+ * that would quietly defeat the guardrail: absolute paths, `..`, catch-alls
+ * such as a lone `*` or `**`, and anything inside `.git/`.
+ */
+const guardrailGlob = z.string().min(1).refine((g) => {
+  const e = g.trim().replace(/\\/g, "/");
+  if (e.startsWith("/") || /^[A-Za-z]:/.test(e)) return false;
+  if (e.split("/").includes("..")) return false;
+  if (/^(\*\*?\/?)+(\*(\.\*)?)?$/.test(e)) return false;
+  if (e === ".git" || e.startsWith(".git/")) return false;
+  return true;
+}, "guardrails.allow entries must be repo-relative, without '..', not a catch-all like '**', and not inside .git/");
+
 export const ConfigSchema = z.object({
   github: z
     .object({
@@ -29,6 +43,8 @@ export const ConfigSchema = z.object({
     .optional(),
   server: z.object({
     port: z.number().int().positive(),
+    /** Interface to listen on. Loopback by default: a same-host reverse proxy is the way in. */
+    host: z.string().optional(),
     publicUrl: z.string().url(),
     sessionSecret: z.string().min(16),
     basePath: z
@@ -51,6 +67,12 @@ export const ConfigSchema = z.object({
       vertexProject: z.string().optional(),
       vertexLocation: z.string().optional(),
       model: z.string().optional(),
+      /** Who decides risky agent actions (shell, web): "auto" = Tweaklet denies
+       *  anything off the safe list; "ask" = the person in the panel decides.
+       *  Default: auto when GitHub sign-in is configured (a shared server), else ask. */
+      approvals: z.enum(["auto", "ask"]).optional(),
+      /** Exact shell commands the agent may run without asking. Default: read-only git, typecheck, lint. */
+      safeCommands: z.array(z.string().min(1)).optional(),
     })
     .optional(),
   repo: z
@@ -65,7 +87,7 @@ export const ConfigSchema = z.object({
     .optional(),
   preview: z
     .object({
-      serviceName: z.string(),           // systemd unit Tweaklet (re)starts, e.g. "t8a-frontend-dev"
+      serviceName: z.string(),           // systemd unit Tweaklet (re)starts, e.g. "webapp-dev"
       subdir: z.string(),                // dev-server cwd relative to repo.path, e.g. "frontend"
       installCheckDir: z.string(),       // if missing, run install before starting, e.g. "frontend/node_modules"
     })
@@ -76,6 +98,12 @@ export const ConfigSchema = z.object({
       rebuildCommand: z.string().optional(),
     })
     .optional(),
+  session: z
+    .object({
+      /** Minutes of inactivity after which the active user's hold on the server is released. */
+      idleMinutes: z.number().int().positive().default(30),
+    })
+    .optional(),
   access: z
     .object({
       allowedLogins: z.array(z.string()).optional(),
@@ -83,7 +111,7 @@ export const ConfigSchema = z.object({
     })
     .optional(),
   guardrails: z
-    .object({ allow: z.array(z.string()).default(["frontend/src/**"]) })
+    .object({ allow: z.array(guardrailGlob).default(["frontend/src/**"]) })
     .default({ allow: ["frontend/src/**"] }),
   setup: z.object({ completed: z.boolean().default(false) }).default({ completed: false }),
 });

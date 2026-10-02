@@ -8,7 +8,7 @@ const { apiMock, getBaseMock } = vi.hoisted(() => {
 });
 vi.mock("./api.js", () => ({ api: apiMock, getBase: getBaseMock }));
 
-import { signIn } from "./auth.js";
+import { signIn, lastSignInMessage } from "./auth.js";
 
 // Helper: fire a message event from the same origin
 function fireSignedInMessage(source: Window = window) {
@@ -200,4 +200,28 @@ describe("signIn()", () => {
 
     expect(result).toBe("timeout");
   });
+
+  it("resolves 'denied' with the server's reason on {type:tweaklet:sign-in-failed}", async () => {
+    vi.spyOn(window, "open").mockReturnValue({ closed: false, close: vi.fn() } as unknown as Window);
+    apiMock.me.mockResolvedValue(null);
+    const promise = signIn();
+    window.dispatchEvent(new MessageEvent("message", {
+      data: { type: "tweaklet:sign-in-failed", message: "Tweaklet is in use by @alice right now." },
+      origin: window.location.origin,
+    }));
+    expect(await promise).toBe("denied");
+    expect(lastSignInMessage()).toBe("Tweaklet is in use by @alice right now.");
+  });
+
+  it("ignores a sign-in-failed message from another origin", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(window, "open").mockReturnValue({ closed: false, close: vi.fn() } as unknown as Window);
+    apiMock.me.mockResolvedValue({ login: "alice", id: 7 });
+    const promise = signIn();
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "tweaklet:sign-in-failed", message: "x" }, origin: "https://evil.example" }));
+    await vi.advanceTimersByTimeAsync(1100); // falls through to the /agent/me poll
+    expect(await promise).toBe("signed-in");
+    vi.useRealTimers();
+  });
 });
+

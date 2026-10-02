@@ -21,10 +21,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "lts/*"
+
+      - name: Public-repo check
+        run: sh scripts/check-public.sh
 
       - name: Install deps (skip prepare) + build server + widget
         run: |

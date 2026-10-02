@@ -17,6 +17,7 @@ const { setBaseMock, setupApiMock, apiMock } = vi.hoisted(() => ({
 
 vi.mock("./api.js", () => ({
   setBase: setBaseMock,
+  lockFetch: vi.fn(),
   getBase: () => "",
   setupApi: setupApiMock,
   api: apiMock,
@@ -31,7 +32,9 @@ vi.mock("./api.js", () => ({
 vi.mock("./SetupWizard.js", () => ({ SetupWizard: () => null }));
 vi.mock("./Panel.js", () => ({ Panel: () => null }));
 
-import { deriveBase, isStandalone, mount } from "./embed.js";
+import { deriveBase, isStandalone, mount, findScriptSrc } from "./embed.js";
+
+const realAttachShadow = HTMLElement.prototype.attachShadow;
 
 describe("deriveBase", () => {
   it("strips /widget.js to give origin+prefix", () => {
@@ -88,26 +91,38 @@ describe("mount", () => {
   });
   afterEach(cleanup);
 
-  it("attaches an open shadow root with the inlined style + the app", async () => {
+  // The shadow root is closed (host scripts can't reach in), so capture it as
+  // it's attached.
+  function captureShadow(): () => ShadowRoot {
+    let captured: ShadowRoot | null = null;
+    vi.spyOn(HTMLElement.prototype, "attachShadow").mockImplementation(function (this: HTMLElement, init: ShadowRootInit) {
+      captured = realAttachShadow.call(this, init);
+      return captured;
+    });
+    return () => captured!;
+  }
+
+  it("attaches a CLOSED shadow root with the inlined style + the app", async () => {
+    const shadow = captureShadow();
     mount("https://host/tweaklet/widget.js");
 
     const root = document.getElementById("tweaklet-root");
     expect(root).not.toBeNull();
-    expect(root!.shadowRoot).not.toBeNull();
-    expect(root!.shadowRoot!.mode).toBe("open");
+    expect(root!.shadowRoot).toBeNull(); // page scripts can't reach the panel
+    expect(shadow().mode).toBe("closed");
 
     // CSS was injected as a <style> in the shadow (not the light DOM). The
     // exact inlined contents are a build-time concern (asserted against the
     // built dist/widget.js); here we confirm the <style> element exists in the
     // shadow tree and not in the host light DOM.
-    const style = root!.shadowRoot!.querySelector("style");
+    const style = shadow().querySelector("style");
     expect(style).not.toBeNull();
     expect(document.querySelector("#tweaklet-root > style")).toBeNull();
-    expect(root!.shadowRoot!.querySelector(".tweaklet-shadow-mount")).not.toBeNull();
+    expect(shadow().querySelector(".tweaklet-shadow-mount")).not.toBeNull();
 
     // React renders asynchronously; the launcher button is always rendered.
     await waitFor(() =>
-      expect(root!.shadowRoot!.querySelector(".apz-launcher")).not.toBeNull(),
+      expect(shadow().querySelector(".apz-launcher")).not.toBeNull(),
     );
   });
 
@@ -138,13 +153,57 @@ describe("mount", () => {
   });
 
   it("renders the centered card (not the launcher) in standalone mode", async () => {
+    const shadow = captureShadow();
     mount("https://host/tweaklet/widget.js?standalone=1");
-    const root = document.getElementById("tweaklet-root")!;
     await waitFor(() =>
-      expect(root.shadowRoot!.querySelector(".apz-standalone")).not.toBeNull(),
+      expect(shadow().querySelector(".apz-standalone")).not.toBeNull(),
     );
     // The edge launcher is NOT used standalone.
-    expect(root.shadowRoot!.querySelector(".apz-launcher")).toBeNull();
-    expect(root.shadowRoot!.querySelector(".tweaklet-standalone-root")).not.toBeNull();
+    expect(shadow().querySelector(".apz-launcher")).toBeNull();
+    expect(shadow().querySelector(".tweaklet-standalone-root")).not.toBeNull();
+  });
+});
+
+describe("findScriptSrc (DOM-clobbering safe)", () => {
+  const here = () => window.location.origin;
+  beforeEach(() => { document.body.innerHTML = ""; vi.spyOn(console, "warn").mockImplementation(() => {}); });
+  afterEach(() => { document.body.innerHTML = ""; vi.restoreAllMocks(); });
+
+  function addScript(src: string) {
+    const s = document.createElement("script");
+    s.setAttribute("src", src);
+    s.type = "text/plain"; // never executed by jsdom
+    document.body.appendChild(s);
+  }
+
+  it("accepts a same-origin <script> whose path ends in /widget.js", () => {
+    addScript("/tweaklet/widget.js?v=2");
+    expect(findScriptSrc()).toBe(`${here()}/tweaklet/widget.js?v=2`);
+  });
+
+  it("ignores a cross-origin widget.js script", () => {
+    addScript("https://attacker.example.com/tweaklet/widget.js");
+    expect(findScriptSrc()).toBe("");
+    expect(console.warn).toHaveBeenCalled();
+  });
+
+  it("ignores same-origin scripts that are not widget.js", () => {
+    addScript("/assets/widget.js.map");
+    addScript("/evil.js?x=/widget.js");
+    expect(findScriptSrc()).toBe("");
+  });
+
+  it("ignores clobbered document.currentScript / non-script elements named like the widget", () => {
+    document.body.innerHTML =
+      '<img name="currentScript" src="https://attacker.example.com/widget.js">' +
+      '<form name="scripts"><input name="src" value="https://attacker.example.com/widget.js"></form>' +
+      '<a id="widget" href="https://attacker.example.com/widget.js">x</a>';
+    expect(findScriptSrc()).toBe("");
+  });
+
+  it("prefers the real same-origin script even when clobbering elements are present", () => {
+    document.body.innerHTML = '<img name="currentScript" src="https://attacker.example.com/widget.js">';
+    addScript("/tweaklet/widget.js");
+    expect(findScriptSrc()).toBe(`${here()}/tweaklet/widget.js`);
   });
 });

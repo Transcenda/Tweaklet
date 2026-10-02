@@ -201,9 +201,9 @@ describe("config", () => {
       server: { port: 4319, publicUrl: "https://x", sessionSecret: "z".repeat(32), basePath: "/tweaklet" },
       guardrails: { allow: ["frontend/src/**"] },
       setup: { completed: false },
-      preview: { serviceName: "t8a-frontend-dev", subdir: "frontend", installCheckDir: "frontend/node_modules" },
+      preview: { serviceName: "webapp-dev", subdir: "frontend", installCheckDir: "frontend/node_modules" },
     });
-    expect(c.preview?.serviceName).toBe("t8a-frontend-dev");
+    expect(c.preview?.serviceName).toBe("webapp-dev");
   });
 
   it("preview is optional", () => {

@@ -1,5 +1,6 @@
 # Tweaklet
 
+[![CI](https://github.com/Transcenda/Tweaklet/actions/workflows/ci.yml/badge.svg)](https://github.com/Transcenda/Tweaklet/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)
@@ -58,16 +59,23 @@ The widget derives its server base from its own `src` at runtime; your reverse p
 
 Proxy `/tweaklet` to the server in dev (`vite.config.ts` → `server.proxy`: `"/tweaklet": "http://127.0.0.1:4319"`). For Next.js, gate on `process.env.NEXT_PUBLIC_TWEAKLET_URL`. Per-framework details — plus an `install-tweaklet-widget` skill for Claude Code that wires this up for you — are in **[docs/INSTALL.md](docs/INSTALL.md)**.
 
+## How it works
+
+See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: the widget, the server, the agent guardrails, the per-change branch workspace, and the live preview.
+
 ## Development
 
 ```bash
+npm ci && npm --prefix web ci
 npm test                  # server unit tests
 npm --prefix web test     # web unit tests
 ```
 
+Working on Tweaklet with an AI agent? Read **[AGENTS.md](AGENTS.md)** first.
+
 ## Contributing
 
-Contributions are welcome — see **[CONTRIBUTING.md](CONTRIBUTING.md)**. Found a security issue? Please follow **[SECURITY.md](SECURITY.md)** (don't open a public issue).
+Contributions are welcome. See **[CONTRIBUTING.md](CONTRIBUTING.md)** and our **[Code of Conduct](CODE_OF_CONDUCT.md)**. Found a security issue? Please follow **[SECURITY.md](SECURITY.md)** (don't open a public issue).
 
 ## License
 

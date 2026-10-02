@@ -2,10 +2,11 @@ import { execFile } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { tokenGitEnv } from "../git/token-git.js";
+import { authGit } from "../git/token-git.js";
+import { redactUrlCredentials } from "../git/validate.js";
 
 /** exec abstraction — injected for tests, defaults to pexec. */
-type Exec = (cmd: string, args: string[], env?: NodeJS.ProcessEnv) => Promise<unknown>;
+type Exec = (cmd: string, args: string[], env?: NodeJS.ProcessEnv) => Promise<{ stdout?: string | Buffer } | undefined>;
 
 const pexec: Exec = (cmd, args, env) =>
   promisify(execFile)(cmd, args, { env: env ? { ...process.env, ...env } : process.env });
@@ -120,20 +121,33 @@ export async function cloneAllowedRepo(
   mkdirSync(opts.sourceDir, { recursive: true });
   const target = join(opts.sourceDir, parsed.name);
   const url = `https://${parsed.host}/${parsed.owner}/${parsed.name}`;
-  const env = tokenGitEnv(opts.token);
+  // Token-carrying calls are network-only and hardened (no repo hooks, no
+  // credential helpers, https only) via authGit; the token is scoped to this host.
+  const auth = (args: string[]) => authGit(args, opts.token, parsed.host);
 
   if (existsSync(join(target, ".git"))) {
-    await exec("git", ["-C", target, "fetch"], env);
-    // `git switch` (not checkout) has no pathspec ambiguity, and `--`
-    // guards a baseBranch that might begin with `-` from being read as a
-    // flag (defence-in-depth; baseBranch is also Zod-refined below).
-    await exec("git", ["-C", target, "switch", "--", opts.baseBranch], env);
+    // Never fetch into (and hand the token to) a directory that holds some
+    // other repository — refuse and leave it untouched.
+    const out = await exec("git", ["-C", target, "remote", "get-url", "origin"]);
+    const origin = String(out?.stdout ?? "").trim();
+    if (normalizeRemote(origin) !== normalizeRemote(url)) {
+      throw new Error(`${target} already holds a different repository (origin ${redactUrlCredentials(origin) || "unset"}, expected ${url}); move it away or choose another source directory`);
+    }
+    const f = auth(["-C", target, "fetch", "origin"]);
+    await exec("git", f.args, f.env);
   } else {
-    await exec("git", ["clone", "--", url, target], env);
-    // `git switch` (not checkout) has no pathspec ambiguity, and `--`
-    // guards a baseBranch that might begin with `-` from being read as a
-    // flag (defence-in-depth; baseBranch is also Zod-refined below).
-    await exec("git", ["-C", target, "switch", "--", opts.baseBranch], env);
+    const c = auth(["clone", "--", url, target]);
+    await exec("git", c.args, c.env);
   }
+  // `git switch` (not checkout) has no pathspec ambiguity, and `--` guards a
+  // baseBranch that might begin with `-` from being read as a flag
+  // (defence-in-depth; baseBranch is also Zod-refined). Local only: no token,
+  // since it runs the repo's post-checkout hook.
+  await exec("git", ["-C", target, "switch", "--", opts.baseBranch]);
   return target;
+}
+
+/** Compare remotes ignoring case, one trailing "/" and a trailing ".git". */
+function normalizeRemote(u: string): string {
+  return u.trim().toLowerCase().replace(/\/$/, "").replace(/\.git$/, "");
 }
