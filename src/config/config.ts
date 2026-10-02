@@ -29,6 +29,8 @@ export const ConfigSchema = z.object({
     .optional(),
   server: z.object({
     port: z.number().int().positive(),
+    /** Interface to listen on. Loopback by default: a same-host reverse proxy is the way in. */
+    host: z.string().optional(),
     publicUrl: z.string().url(),
     sessionSecret: z.string().min(16),
     basePath: z

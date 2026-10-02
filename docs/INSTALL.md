@@ -57,9 +57,20 @@ The prefix must reach the app intact (do **not** strip it). The app is mounted u
 
 ```nginx
 location /tweaklet/ {
-    proxy_pass http://localhost:4319;
+    proxy_pass http://127.0.0.1:4319;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
 }
 ```
+
+Keep the forwarding headers. Tweaklet uses them to tell proxied requests apart
+from requests made on the machine itself; Caddy sends them by default.
+
+Tweaklet listens on `127.0.0.1` by default, so the reverse proxy on the same
+machine is the only way in. To expose it on another interface (for example,
+with the proxy on a different host), set `server.host` in
+`~/.tweaklet/config.json`, such as `"0.0.0.0"`.
 
 ---
 

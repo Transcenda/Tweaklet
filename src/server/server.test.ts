@@ -86,7 +86,7 @@ describe("server", () => {
   });
 
   it("/tweaklet/auth/cli mints a session and redirects to /tweaklet/ when gh CLI is authenticated", async () => {
-    const app = createServer(config, { ghCliUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }), sessionStore: noopStore() });
+    const app = createServer(configNoGithub, { ghCliUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }), sessionStore: noopStore() });
     const res = await request(app).get("/tweaklet/auth/cli").expect(302);
     expect(res.headers.location).toBe("/tweaklet/");
     expect((res.headers["set-cookie"] as unknown as string[]).join(";")).toContain("apz_session=");
@@ -139,7 +139,7 @@ describe("server", () => {
 
   it("/tweaklet/auth/cli 403s when the gh CLI user is not on the allowlist", async () => {
     const allowlistConfig: TweakletConfig = {
-      ...config,
+      ...configNoGithub,
       access: { allowedLogins: ["bob"] },
     };
     const app = createServer(allowlistConfig, { ghCliUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }), sessionStore: noopStore() });

@@ -24,6 +24,7 @@ import { fetchSessionMessages as realFetchSessionMessages, messagesToEvents } fr
 import { runPrompt as realRunPrompt, getServer, stopServer, smokeTestAgent as realSmokeTestAgent } from "../agent/opencode-server.js";
 import { ensureOpencodeProvider } from "../agent/provider-config.js";
 import { mountDomMcp } from "../agent/mcp-server.js";
+import { isValidMcpAuth } from "../agent/mcp-secret.js";
 import { makeSessionStore } from "./session-store.js";
 import type { SessionStore } from "./session-store.js";
 import { setActivePrompt, resolveDomInspect, type DomResult } from "../agent/dom-inspect.js";
@@ -127,9 +128,24 @@ export function titleFromPrompt(prompt: string): string {
   return line.slice(0, 80) || "New change";
 }
 
-function isLoopback(req: { ip?: string; socket?: { remoteAddress?: string } }): boolean {
-  const addr = req.ip || req.socket?.remoteAddress || "";
-  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1" || addr === "" || addr === undefined;
+const LOOPBACK_ADDRS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+const PROXY_HEADERS = ["x-forwarded-for", "forwarded", "x-real-ip", "x-forwarded-host", "via"];
+
+/**
+ * True only for a request made directly on this machine — never one relayed by
+ * a reverse proxy. Behind a same-host proxy every request arrives on a loopback
+ * socket, so the socket alone proves nothing: also require that no proxy header
+ * is present and that the request is addressed to a local hostname (a proxy
+ * that adds no headers still forwards the public Host, or its own upstream).
+ */
+export function isDirectLocal(req: { socket?: { remoteAddress?: string }; headers: Record<string, string | string[] | undefined> }): boolean {
+  const addr = req.socket?.remoteAddress;
+  if (!addr || !LOOPBACK_ADDRS.has(addr)) return false;
+  if (PROXY_HEADERS.some((h) => req.headers[h] !== undefined)) return false;
+  const host = String(req.headers.host ?? "").toLowerCase();
+  const hostname = host.startsWith("[") ? host.slice(0, host.indexOf("]") + 1) : host.split(":")[0];
+  return LOCAL_HOSTNAMES.has(hostname);
 }
 
 function parseCookies(req: Request): Record<string, string> {
@@ -256,6 +272,10 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   const basePath = config.server.basePath ?? "/tweaklet";
   const redirectUri = `${config.server.publicUrl}${basePath}/auth/callback`;
   const app = express();
+  // Tweaklet runs behind a reverse proxy on the same machine: trust forwarding
+  // headers from loopback only, so req.ip is the real client (rate limiting)
+  // while a remote caller can't spoof one.
+  app.set("trust proxy", "loopback");
   app.use(express.json());
 
   function currentUser(req: Request): GithubUser | null {
@@ -514,7 +534,14 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   // ── Auth + agent routes ──────────────────────────────────────────────────────
 
   router.get("/auth/cli", async (req, res) => {
-    if (!isLoopback(req)) {
+    // Signing in as this machine's `gh` user is a convenience for a developer's
+    // own laptop. A server with GitHub sign-in configured never needs it, and it
+    // must never be reachable through a proxy.
+    if (config.github?.clientId) {
+      res.redirect(`${basePath}/auth/login`);
+      return;
+    }
+    if (!isDirectLocal(req)) {
       res.status(403).json({ error: "cli auth is local-only; sign in via GitHub OAuth from a remote host" });
       return;
     }
@@ -1002,8 +1029,8 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   // this to loopback callers — there is no auth on the MCP transport itself and
   // it must never be reachable from the network. Mounted before the catch-all.
   router.use("/mcp", (req, res, next) => {
-    if (!isLoopback(req)) {
-      res.status(403).json({ error: "mcp endpoint is loopback-only" });
+    if (!isDirectLocal(req) || !isValidMcpAuth(req.headers.authorization)) {
+      res.status(403).json({ error: "mcp endpoint is local-only and requires this server's token" });
       return;
     }
     next();
@@ -1033,7 +1060,9 @@ export function serve(config: TweakletConfig): void {
   // warm up opencode — so the model resolves on a from-scratch box.
   if (config.agent) { try { ensureOpencodeProvider(config.agent, { port: config.server.port, basePath: config.server.basePath }); } catch (e) { console.warn("Tweaklet: could not write opencode provider config:", String(e)); } }
 
-  createServer(config, { setupToken }).listen(config.server.port, () => {
+  // Bound to loopback by default: the reverse proxy on this machine is the only
+  // way in. Set server.host (e.g. "0.0.0.0") to expose it directly.
+  createServer(config, { setupToken }).listen(config.server.port, config.server.host ?? "127.0.0.1", () => {
     console.log(`Tweaklet listening on ${config.server.publicUrl}`);
     if (setupToken) {
       console.log(
