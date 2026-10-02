@@ -4,11 +4,16 @@
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-Instead, email **security@transcenda.com** with:
+Instead, report it privately through GitHub:
+**[Report a vulnerability](https://github.com/Transcenda/Tweaklet/security/advisories/new)**
+(Security → Advisories → *Report a vulnerability*). Please include:
 
 - a description of the issue and its impact,
 - steps to reproduce (a proof of concept if possible),
 - any affected versions / configuration.
+
+Please don't include secrets or data from a real deployment in the report; a minimal
+reproduction against a throwaway repository is ideal.
 
 You'll get an acknowledgement within a few business days, and we'll keep you updated
 as we investigate and ship a fix. We'll credit you in the release notes unless you

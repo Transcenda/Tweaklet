@@ -3,8 +3,8 @@ import { ghCliUser } from "./gh-cli.js";
 
 describe("ghCliUser", () => {
   it("returns the user from gh api user output", async () => {
-    const exec = async () => ({ stdout: '{"id":402001,"login":"webdevbyjoss"}' });
-    expect(await ghCliUser(exec)).toMatchObject({ login: "webdevbyjoss", id: 402001 });
+    const exec = async () => ({ stdout: '{"id":583231,"login":"octocat"}' });
+    expect(await ghCliUser(exec)).toMatchObject({ login: "octocat", id: 583231 });
   });
   it("returns null when gh exits non-zero / not installed", async () => {
     const exec = async () => { throw new Error("gh: command not found"); };

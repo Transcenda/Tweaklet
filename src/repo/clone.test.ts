@@ -148,17 +148,17 @@ describe("isRepoAllowed", () => {
 // ---------------------------------------------------------------------------
 
 describe("cloneAllowedRepo (token git)", () => {
-  const allowlist = ["transcenda/t8a"];
+  const allowlist = ["acme/webapp"];
   it("clones the https URL with the token env (no gh, token not on argv)", async () => {
     const calls: { cmd: string; args: string[]; hasToken: boolean }[] = [];
     const exec = async (cmd: string, args: string[], env?: NodeJS.ProcessEnv) => {
       calls.push({ cmd, args, hasToken: env?.TWEAKLET_GIT_TOKEN === "tok" });
       return { code: 0, stdout: "", stderr: "" };
     };
-    await cloneAllowedRepo("transcenda/t8a", { allowlist, sourceDir: "/tmp/zzz-not-real-clone-test", baseBranch: "main", token: "tok" }, exec);
+    await cloneAllowedRepo("acme/webapp", { allowlist, sourceDir: "/tmp/zzz-not-real-clone-test", baseBranch: "main", token: "tok" }, exec);
     const clone = calls.find((c) => c.args[0] === "clone")!;
     expect(clone.cmd).toBe("git");
-    expect(clone.args).toContain("https://github.com/transcenda/t8a");
+    expect(clone.args).toContain("https://github.com/acme/webapp");
     expect(clone.hasToken).toBe(true);
     expect(calls.every((c) => !c.args.join(" ").includes("tok"))).toBe(true); // token never on argv
     expect(calls.some((c) => c.cmd === "gh")).toBe(false);                    // gh dropped

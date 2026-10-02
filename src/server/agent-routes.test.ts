@@ -248,7 +248,7 @@ describe("POST /tweaklet/agent/stop", () => {
 
 const configWithRepoAllowlist: TweakletConfig = {
   ...base,
-  repo: { path: "", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: ["transcenda/t8a"], sourceDir: "/tmp/repos" },
+  repo: { path: "", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: ["acme/webapp"], sourceDir: "/tmp/repos" },
   setup: { completed: false },
 };
 
@@ -284,7 +284,7 @@ describe("GET /tweaklet/agent/repos", () => {
       .get("/tweaklet/agent/repos")
       .set("Cookie", session)
       .expect(200);
-    expect(res.body.allowlist).toEqual(["transcenda/t8a"]);
+    expect(res.body.allowlist).toEqual(["acme/webapp"]);
     expect(typeof res.body.cloned).toBe("boolean");
   });
 
@@ -301,7 +301,7 @@ describe("POST /tweaklet/agent/clone", () => {
       fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
       cloneRepo: async (repoRef: string, opts: any) => {
         cloned = { repoRef, token: opts.token };
-        return "/tmp/src/t8a";
+        return "/tmp/src/webapp";
       },
       saveConfig: () => {},
       sessionStore: noopStore(),
@@ -310,11 +310,11 @@ describe("POST /tweaklet/agent/clone", () => {
     const res = await request(app)
       .post("/tweaklet/agent/clone")
       .set("Cookie", session)
-      .send({ repoRef: "transcenda/t8a" })
+      .send({ repoRef: "acme/webapp" })
       .expect(200);
-    expect(cloned!.repoRef).toBe("transcenda/t8a");
+    expect(cloned!.repoRef).toBe("acme/webapp");
     expect(cloned!.token).toBe("gho_tok");
-    expect(res.body.path).toBe("/tmp/src/t8a");
+    expect(res.body.path).toBe("/tmp/src/webapp");
   });
 
   it("returns 400 when no repo is configured", async () => {
@@ -326,15 +326,15 @@ describe("POST /tweaklet/agent/clone", () => {
       sessionStore: noopStore(),
     });
     const session = await signInAlice(app);
-    await request(app).post("/tweaklet/agent/clone").set("Cookie", session).send({ repoRef: "transcenda/t8a" }).expect(400);
+    await request(app).post("/tweaklet/agent/clone").set("Cookie", session).send({ repoRef: "acme/webapp" }).expect(400);
   });
 
   it("returns 401 without a session", async () => {
-    await request(appWith()).post("/tweaklet/agent/clone").send({ repoRef: "transcenda/t8a" }).expect(401);
+    await request(appWith()).post("/tweaklet/agent/clone").send({ repoRef: "acme/webapp" }).expect(401);
   });
 
   it("triggers ensurePreview when preview is configured", async () => {
-    const previewConfig = { serviceName: "t8a-frontend-dev", subdir: "frontend", installCheckDir: "frontend/node_modules" };
+    const previewConfig = { serviceName: "webapp-dev", subdir: "frontend", installCheckDir: "frontend/node_modules" };
     const configWithPreview: TweakletConfig = {
       ...configWithRepoAllowlist,
       preview: previewConfig,
@@ -352,7 +352,7 @@ describe("POST /tweaklet/agent/clone", () => {
     const res = await request(app)
       .post("/tweaklet/agent/clone")
       .set("Cookie", session)
-      .send({ repoRef: "transcenda/t8a" })
+      .send({ repoRef: "acme/webapp" })
       .expect(200);
     expect(res.body.path).toBe("/repo");
     expect(ensurePreviewSpy).toHaveBeenCalledOnce();
@@ -360,7 +360,7 @@ describe("POST /tweaklet/agent/clone", () => {
   });
 
   it("clone still succeeds (200) when ensurePreview throws", async () => {
-    const previewConfig = { serviceName: "t8a-frontend-dev", subdir: "frontend", installCheckDir: "frontend/node_modules" };
+    const previewConfig = { serviceName: "webapp-dev", subdir: "frontend", installCheckDir: "frontend/node_modules" };
     const configWithPreview: TweakletConfig = {
       ...configWithRepoAllowlist,
       preview: previewConfig,
@@ -378,7 +378,7 @@ describe("POST /tweaklet/agent/clone", () => {
     const res = await request(app)
       .post("/tweaklet/agent/clone")
       .set("Cookie", session)
-      .send({ repoRef: "transcenda/t8a" })
+      .send({ repoRef: "acme/webapp" })
       .expect(200);
     expect(res.body.path).toBe("/repo");
     expect(ensurePreviewSpy).toHaveBeenCalledOnce();

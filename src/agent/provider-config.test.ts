@@ -5,11 +5,11 @@ describe("buildOpencodeProviderConfig", () => {
   it("builds a google-vertex-ai provider from the agent model + project/location", () => {
     const cfg = buildOpencodeProviderConfig({
       model: "google-vertex-ai/gemini-2.5-pro",
-      vertexProject: "ai-adoption-488503",
+      vertexProject: "my-gcp-project",
       vertexLocation: "global",
     }) as any;
     expect(cfg.provider["google-vertex-ai"].npm).toBe("@ai-sdk/google-vertex");
-    expect(cfg.provider["google-vertex-ai"].options).toEqual({ project: "ai-adoption-488503", location: "global" });
+    expect(cfg.provider["google-vertex-ai"].options).toEqual({ project: "my-gcp-project", location: "global" });
     // The configured model must be present so opencode resolves it.
     expect(cfg.provider["google-vertex-ai"].models["gemini-2.5-pro"]).toBeTruthy();
   });

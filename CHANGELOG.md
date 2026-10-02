@@ -27,7 +27,9 @@ tarball (`tweaklet-server.tgz`); install/upgrade with
 - **Reconnect nudge** when the server has lost the GitHub token (e.g. after a
   restart). Without the token it can't fetch the latest base or submit.
 - The ↩ recovery button now undoes unsaved edits instead of deleting the change.
+- **Requires the current Node LTS (24+).** Only the current LTS line is supported now (`engines: >=24`). Node 20 reached end-of-life in April 2026. The doctor reports older Node as a failure with an upgrade hint, so upgrade the host's Node before installing this release.
 - `@opencode-ai/sdk` 1.18.34. Install `opencode-ai@1.18.34` on the host to match.
+- Design: [`docs/specs/2026-10-01-branch-workspace-design.md`](docs/specs/2026-10-01-branch-workspace-design.md).
 
 ## v0.0.4 — Branch-sync (2026-06-21)
 
@@ -69,9 +71,9 @@ tarball (`tweaklet-server.tgz`); install/upgrade with
 
 ## v0.0.1 — Initial open-source release (2026-06-20)
 
-- First public release as a standalone repo (previously developed inside the t8a
-  monorepo). Includes the self-mounting Shadow-DOM widget, the opencode-on-Vertex
-  agent, per-user GitHub OAuth, the change lifecycle (start → save points → submit
-  PR), the in-app live preview + DOM-inspect MCP + crash-safe recovery (the "closed
+- First public release as a standalone repo (previously developed privately).
+  Includes the self-mounting Shadow-DOM widget, the opencode-on-Vertex agent,
+  per-user GitHub OAuth, the change lifecycle (start → save points → submit PR),
+  the in-app live preview + DOM-inspect MCP + crash-safe recovery (the "closed
   loop"), and the in-browser setup wizard. Distributed as a prebuilt GitHub Release
   tarball — no npm registry account required.

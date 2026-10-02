@@ -21,7 +21,7 @@
   ],
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "bin": {
     "tweaklet": "./dist/index.js"
@@ -38,6 +38,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check:public": "sh scripts/check-public.sh",
     "build": "tsc -p tsconfig.build.json",
     "build:web": "npm --prefix web install && npm --prefix web run build",
     "build:all": "npm run build && npm run build:web",
@@ -52,7 +53,7 @@
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
-    "@types/node": "^20.14.0",
+    "@types/node": "^24.19.0",
     "@types/supertest": "^6.0.2",
     "supertest": "^7.0.0",
     "tsx": "^4.16.0",
