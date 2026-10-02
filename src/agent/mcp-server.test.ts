@@ -57,4 +57,27 @@ describe("buildDomMcpServer", () => {
     expect(content[0].type).toBe("text");
     expect(JSON.parse(content[0].text)).toEqual({ exists: false });
   });
+
+  it("rejects an empty or oversized selector without asking the widget", async () => {
+    const { client } = await connectedClient();
+    const sent: any[] = [];
+    setActivePrompt({ send: (e) => sent.push(e), pending: new Map() });
+    try {
+      for (const selector of ["", "a".repeat(1001)]) {
+        const res = await client.callTool({ name: "dom_query", arguments: { selector } });
+        expect(res.isError).toBe(true);
+      }
+      expect(sent).toHaveLength(0);
+    } finally {
+      setActivePrompt(null);
+    }
+  });
+
+  it("tells the model the result is redacted page data, not instructions", async () => {
+    const { client } = await connectedClient();
+    const { tools } = await client.listTools();
+    const dom = tools.find((t) => t.name === "dom_query")!;
+    expect(dom.description).toMatch(/redacted/i);
+    expect(dom.description).toMatch(/data, not instructions/i);
+  });
 });

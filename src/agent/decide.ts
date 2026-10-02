@@ -1,4 +1,4 @@
-import { matchesAllow } from "../guardrails/guardrails.js";
+import { canonicalRepoPath, matchesAllow } from "../guardrails/guardrails.js";
 
 export interface PermissionAsked { permission?: string; patterns?: string[]; }
 export type Decision = "approve" | "deny" | "ask";
@@ -18,6 +18,10 @@ export interface Policy {
   allow: string[];
   mode: "auto" | "ask";
   safeCommands: string[];
+  /** The repo opencode edits. When set, each edit path is judged by where it
+   *  really points (symlinks resolved), not just how it is spelled — see
+   *  canonicalRepoPath. Unset keeps the lexical check only. */
+  repoRoot?: string;
 }
 
 /** Shell commands that only read or check code. Tests are deliberately absent:
@@ -49,6 +53,16 @@ function isSafeCommand(cmd: string, safe: string[]): boolean {
   return safe.some((s) => norm(s) === c);
 }
 
+function editAllowed(p: string, policy: Policy): boolean {
+  // The spelled path must pass (it is what the person sees), AND, when we know
+  // the repo, so must the real target: a symlink inside an allowed dir can't
+  // carry an edit out of it, into .git, or out of the repo.
+  if (!matchesAllow(p, policy.allow)) return false;
+  if (policy.repoRoot === undefined) return true;
+  const real = canonicalRepoPath(policy.repoRoot, p);
+  return real !== null && matchesAllow(real, policy.allow);
+}
+
 export function decidePermission(p: PermissionAsked, policy: Policy): Decision {
   const kind = (p.permission ?? "").toLowerCase();
   const patterns = p.patterns ?? [];
@@ -56,7 +70,7 @@ export function decidePermission(p: PermissionAsked, policy: Policy): Decision {
 
   if (EDIT_KINDS.has(kind)) {
     if (patterns.length === 0) return "deny";
-    return patterns.every((x) => matchesAllow(x, policy.allow)) ? "approve" : "deny";
+    return patterns.every((x) => editAllowed(x, policy)) ? "approve" : "deny";
   }
   if (READ_ONLY_KINDS.has(kind)) return "approve";
   if (NEVER_KINDS.has(kind)) return "deny";
