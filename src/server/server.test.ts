@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import request from "supertest";
-import { createServer } from "./server.js";
+import { createServer, issueSessionToken } from "./server.js";
 import { sign } from "../auth/signing.js";
 import type { TweakletConfig } from "../config/config.js";
 import type { Check } from "../doctor/doctor.js";
@@ -44,7 +44,7 @@ describe("server", () => {
       runDiagnostics: async () => sampleCheck,
       sessionStore: noopStore(),
     });
-    const cookie = `apz_session=${sign({ login: "alice", id: 7 }, config.server.sessionSecret)}`;
+    const cookie = `apz_session=${issueSessionToken({ login: "alice", id: 7 }, config.server.sessionSecret)}`;
     const res = await request(app).get("/tweaklet/agent/doctor").set("Cookie", cookie).expect(200);
     expect(res.body.checks[0].name).toBe("opencode");
     expect(res.body.checks[0].status).toBe("ok");
@@ -55,7 +55,7 @@ describe("server", () => {
   });
 
   it("returns the user on /tweaklet/agent/me with a valid session cookie", async () => {
-    const cookie = `apz_session=${sign({ login: "alice", id: 7 }, config.server.sessionSecret)}`;
+    const cookie = `apz_session=${issueSessionToken({ login: "alice", id: 7 }, config.server.sessionSecret)}`;
     const res = await request(appWith()).get("/tweaklet/agent/me").set("Cookie", cookie).expect(200);
     expect(res.body).toMatchObject({ login: "alice", id: 7 });
   });
@@ -185,10 +185,13 @@ describe("basePath routing", () => {
       fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
       sessionStore: noopStore(),
     });
-    const agent = request.agent(app);
-    const login = await agent.get("/tw/auth/login").expect(302);
+    // https publicUrl → the state cookie is Secure, which a plain-http test
+    // agent won't replay; carry it explicitly.
+    const login = await request(app).get("/tw/auth/login").expect(302);
     const state = new URL(login.headers.location).searchParams.get("state")!;
-    await agent.get(`/tw/auth/callback?code=abc&state=${state}`).expect(200);
+    const stateCookie = ([] as string[]).concat(login.headers["set-cookie"] as any).find((c) => c.startsWith("apz_oauth_state="))!;
+    expect(stateCookie).toMatch(/Secure/);
+    await request(app).get(`/tw/auth/callback?code=abc&state=${state}`).set("Cookie", stateCookie.split(";")[0]).expect(200);
     expect(capturedRedirectUri).toBe("https://example.com/tw/auth/callback");
   });
 });

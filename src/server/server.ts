@@ -96,6 +96,44 @@ export interface ServerDeps {
 
 const SESSION_COOKIE = "apz_session";
 const STATE_COOKIE = "apz_oauth_state";
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+
+/** What a session cookie carries. `typ` keeps other signed values (like the
+ *  OAuth state cookie) from ever passing as a session; `sid` lets logout
+ *  revoke it server-side; `exp` bounds its life. */
+interface SessionClaims {
+  typ: "session";
+  sid: string;
+  login: string;
+  id: number;
+  name?: string;
+  email?: string;
+  iat: number;
+  exp: number;
+}
+
+/** Mint a signed session token for a GitHub user. Exported for tests. */
+export function issueSessionToken(
+  user: { login: string; id: number; name?: string; email?: string },
+  secret: string,
+  now = Date.now(),
+): string {
+  const claims: SessionClaims = {
+    typ: "session", sid: randomBytes(16).toString("hex"),
+    login: user.login, id: user.id, name: user.name, email: user.email,
+    iat: now, exp: now + SESSION_TTL_MS,
+  };
+  return sign(claims, secret);
+}
+
+function parseSession(token: string, secret: string, now = Date.now()): SessionClaims | null {
+  const c = verify<Partial<SessionClaims>>(token, secret);
+  if (!c || c.typ !== "session") return null;
+  if (typeof c.sid !== "string" || typeof c.login !== "string" || typeof c.id !== "number") return null;
+  if (typeof c.exp !== "number" || c.exp <= now) return null;
+  return c as SessionClaims;
+}
 
 /**
  * Validate a guardrailsAllow entry.
@@ -152,7 +190,12 @@ function parseCookies(req: Request): Record<string, string> {
   const out: Record<string, string> = {};
   for (const part of (req.headers.cookie ?? "").split(";")) {
     const i = part.indexOf("=");
-    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    if (i <= 0) continue;
+    const name = part.slice(0, i).trim();
+    // First wins: browsers send the most specific path first, so a current
+    // /tweaklet-scoped cookie beats a leftover root-scoped one.
+    if (name in out) continue;
+    try { out[name] = decodeURIComponent(part.slice(i + 1).trim()); } catch { /* malformed — skip */ }
   }
   return out;
 }
@@ -278,9 +321,31 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   app.set("trust proxy", "loopback");
   app.use(express.json());
 
-  function currentUser(req: Request): GithubUser | null {
+  // Sessions revoked by logout (sid → expiry), pruned as they expire.
+  const revokedSessions = new Map<string, number>();
+  function revoke(claims: SessionClaims) {
+    const now = Date.now();
+    for (const [sid, exp] of revokedSessions) if (exp <= now) revokedSessions.delete(sid);
+    revokedSessions.set(claims.sid, claims.exp);
+  }
+  function sessionClaims(req: Request): SessionClaims | null {
     const tok = parseCookies(req)[SESSION_COOKIE];
-    return tok ? verify<GithubUser>(tok, secret) : null;
+    const c = tok ? parseSession(tok, secret) : null;
+    return c && !revokedSessions.has(c.sid) ? c : null;
+  }
+  /** The signed-in user — only for a valid, unexpired, unrevoked session of
+   *  someone who is (still) allowed in. Re-checked on every request. */
+  function currentUser(req: Request): GithubUser | null {
+    const c = sessionClaims(req);
+    if (!c) return null;
+    const user: GithubUser = { login: c.login, id: c.id, name: c.name ?? c.login, email: c.email ?? "" };
+    return isAllowed(user, config) ? user : null;
+  }
+  const secureCookies = config.server.publicUrl.startsWith("https://");
+  const cookieBase = { httpOnly: true, sameSite: "lax" as const, secure: secureCookies, path: basePath };
+  function setSession(res: Response, user: GithubUser) {
+    res.cookie(SESSION_COOKIE, issueSessionToken(user, secret), { ...cookieBase, maxAge: SESSION_TTL_MS });
+    res.clearCookie(SESSION_COOKIE, { path: "/" }); // legacy root-scoped cookie from older versions
   }
 
   function authGate(req: Request, res: Response, next: NextFunction) {
@@ -555,7 +620,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       res.status(403).json({ error: "not authorized", detail: `${user.login} is not on the access allowlist` });
       return;
     }
-    res.cookie(SESSION_COOKIE, sign(user, secret), { httpOnly: true, sameSite: "lax", path: "/" });
+    setSession(res, user);
     res.redirect(`${basePath}/`);
   });
 
@@ -565,7 +630,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       return;
     }
     const state = randomBytes(16).toString("hex");
-    res.cookie(STATE_COOKIE, sign({ state }, secret), { httpOnly: true, sameSite: "lax", path: "/" });
+    res.cookie(STATE_COOKIE, sign({ typ: "oauth-state", state, exp: Date.now() + OAUTH_STATE_TTL_MS }, secret), { ...cookieBase, maxAge: OAUTH_STATE_TTL_MS });
     res.redirect(
       buildAuthorizeUrl({
         clientId: config.github.clientId,
@@ -584,8 +649,10 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     const code = String(req.query.code ?? "");
     const state = String(req.query.state ?? "");
     const signed = parseCookies(req)[STATE_COOKIE];
-    const expected = signed ? verify<{ state: string }>(signed, secret) : null;
-    if (!code || !expected || expected.state !== state) {
+    const expected = signed ? verify<{ typ?: string; state?: string; exp?: number }>(signed, secret) : null;
+    const stateOk = !!expected && expected.typ === "oauth-state" && typeof expected.exp === "number"
+      && expected.exp > Date.now() && typeof expected.state === "string" && expected.state === state;
+    if (!code || !stateOk) {
       res.status(400).json({ error: "invalid oauth state" });
       return;
     }
@@ -599,13 +666,13 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       });
       const user = await fetchUser({ token, apiBaseUrl: config.github.apiBaseUrl });
       if (!isAllowed(user, config)) {
-        res.clearCookie(STATE_COOKIE, { path: "/" });
+        res.clearCookie(STATE_COOKIE, { path: basePath });
         res.status(403).json({ error: "not authorized", detail: `${user.login} is not on the access allowlist` });
         return;
       }
       tokenStore.set(user.login, { token, name: user.name, email: user.email });
-      res.cookie(SESSION_COOKIE, sign(user, secret), { httpOnly: true, sameSite: "lax", path: "/" });
-      res.clearCookie(STATE_COOKIE, { path: "/" });
+      setSession(res, user);
+      res.clearCookie(STATE_COOKIE, { path: basePath });
       // If opened in a popup the page notifies the opener and closes itself.
       // If visited directly (non-popup) it falls back to a normal redirect.
       res.type("html").send(
@@ -627,7 +694,9 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   });
 
   router.post("/auth/logout", (req, res) => {
-    const u = currentUser(req); if (u) tokenStore.delete(u.login);
+    const c = sessionClaims(req);
+    if (c) { revoke(c); tokenStore.delete(c.login); }
+    res.clearCookie(SESSION_COOKIE, { path: basePath });
     res.clearCookie(SESSION_COOKIE, { path: "/" });
     res.status(204).end();
   });

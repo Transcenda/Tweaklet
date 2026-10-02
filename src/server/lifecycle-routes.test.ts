@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import request from "supertest";
-import { createServer } from "./server.js";
+import { createServer, issueSessionToken } from "./server.js";
 import { sign } from "../auth/signing.js";
 import type { TweakletConfig } from "../config/config.js";
 import { makeSessionStore } from "./session-store.js";
@@ -16,7 +16,7 @@ const config: TweakletConfig = {
   guardrails: { allow: ["frontend/src/**"] },
   setup: { completed: false },
 };
-const cookie = `apz_session=${sign({ login: "alice", id: 7 }, config.server.sessionSecret)}`;
+const cookie = `apz_session=${issueSessionToken({ login: "alice", id: 7 }, config.server.sessionSecret)}`;
 
 const lifecycle = {
   startBranch: async (_cwd: string, o: any) => ({ branch: `tweaklet/${o.idea.toLowerCase().replace(/\W+/g, "-")}`, title: o.idea, synced: true }),

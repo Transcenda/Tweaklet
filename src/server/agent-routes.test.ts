@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import request from "supertest";
-import { createServer } from "./server.js";
+import { createServer, issueSessionToken } from "./server.js";
 import { sign } from "../auth/signing.js";
 import type { TweakletConfig } from "../config/config.js";
 import { makeSessionStore } from "./session-store.js";
@@ -15,9 +15,9 @@ const base: TweakletConfig = {
   guardrails: { allow: ["frontend/src/**"] },
   setup: { completed: false },
 };
-const authCookie = `apz_session=${sign({ login: "alice", id: 7 }, base.server.sessionSecret)}`;
+const authCookie = `apz_session=${issueSessionToken({ login: "alice", id: 7 }, base.server.sessionSecret)}`;
 // A second authenticated user (bob) — used to test cross-user IDOR prevention.
-const bobCookie = `apz_session=${sign({ login: "bob", id: 8 }, base.server.sessionSecret)}`;
+const bobCookie = `apz_session=${issueSessionToken({ login: "bob", id: 8 }, base.server.sessionSecret)}`;
 
 // A runPrompt double that just emits an end-ish event and returns a session id.
 const fakeRunPrompt = async (a: any) => {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import request from "supertest";
-import { createServer } from "./server.js";
+import { createServer, issueSessionToken } from "./server.js";
 import { sign } from "../auth/signing.js";
 import type { TweakletConfig } from "../config/config.js";
 import { makeSessionStore } from "./session-store.js";
@@ -11,7 +11,7 @@ const config: TweakletConfig = {
   guardrails: { allow: ["src/**"] },
   setup: { completed: true },
 };
-const cookieFor = (login: string, id: number) => `apz_session=${sign({ login, id }, config.server.sessionSecret)}`;
+const cookieFor = (login: string, id: number) => `apz_session=${issueSessionToken({ login, id }, config.server.sessionSecret)}`;
 const app = (rateLimit: { api?: number; auth?: number }) =>
   createServer(config, { sessionStore: makeSessionStore("/dev/null", { read: () => null, write: () => {} }), rateLimit });
 

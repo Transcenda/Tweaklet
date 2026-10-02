@@ -3,7 +3,7 @@ import request from "supertest";
 import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createServer } from "./server.js";
+import { createServer, issueSessionToken } from "./server.js";
 import { sign } from "../auth/signing.js";
 import { ConfigSchema } from "../config/config.js";
 import type { TweakletConfig, TweakletConfigInput } from "../config/config.js";
@@ -293,7 +293,7 @@ describe("POST /tweaklet/setup/complete", () => {
       setupToken: KNOWN_TOKEN,
       sessionStore: noopStore(),
     });
-    const cookie = `apz_session=${sign({ login: "alice", id: 7 }, baseConfig.server.sessionSecret)}`;
+    const cookie = `apz_session=${issueSessionToken({ login: "alice", id: 7 }, baseConfig.server.sessionSecret)}`;
     const res = await request(app)
       .post("/tweaklet/setup/complete")
       .set("Cookie", cookie)
@@ -332,7 +332,7 @@ describe("POST /tweaklet/setup/complete", () => {
       setupToken: KNOWN_TOKEN,
       sessionStore: noopStore(),
     });
-    const cookie = `apz_session=${sign({ login: "alice", id: 7 }, fullConfig.server.sessionSecret)}`;
+    const cookie = `apz_session=${issueSessionToken({ login: "alice", id: 7 }, fullConfig.server.sessionSecret)}`;
     const res = await request(app)
       .post("/tweaklet/setup/complete")
       .set("Cookie", cookie)
