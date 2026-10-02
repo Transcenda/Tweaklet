@@ -1,4 +1,5 @@
 import express, { type Request, type Response, type NextFunction } from "express";
+import rateLimit from "express-rate-limit";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -836,6 +837,13 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   });
 
   // ── Change workspace: list / switch / delete Tweaklet branches ─────────────
+  const branchSwitchLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
   router.get("/agent/branches", authGate, async (_req, res) => {
     if (!requireRepo(res)) return;
     try {
@@ -844,7 +852,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     } catch (e) { res.status(500).json({ error: String(e) }); }
   });
 
-  router.post("/agent/branches/switch", authGate, async (req, res) => {
+  router.post("/agent/branches/switch", authGate, branchSwitchLimiter, async (req, res) => {
     if (!requireRepo(res)) return;
     const branch = String(req.body?.branch ?? "");
     if (!branch) { res.status(400).json({ error: "no branch" }); return; }
