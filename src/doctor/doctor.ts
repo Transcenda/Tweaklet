@@ -1,4 +1,5 @@
 import type { TweakletConfig } from "../config/config.js";
+import { redactUrlCredentials } from "../git/validate.js";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import * as http from "node:http";
@@ -248,7 +249,7 @@ export async function runDiagnostics(config: TweakletConfig, deps: DoctorDeps = 
     try {
       const { code, stdout } = await exec("git", ["-C", config.repo.path, "remote", "get-url", "origin"]);
       if (code === 0) {
-        checks.push({ name: "git remote", status: "ok", detail: stdout.trim(), category: "repo" });
+        checks.push({ name: "git remote", status: "ok", detail: redactUrlCredentials(stdout.trim()), category: "repo" });
       } else {
         checks.push({
           name: "git remote",

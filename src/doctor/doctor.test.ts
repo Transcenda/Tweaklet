@@ -178,6 +178,17 @@ describe("runDiagnostics", () => {
   });
 });
 
+describe("runDiagnostics — git remote", () => {
+  it("never shows credentials embedded in the origin URL", async () => {
+    const exec: Exec = async (cmd, args) =>
+      args.includes("get-url") ? { code: 0, stdout: "https://octocat:ghp_secret@github.com/acme/webapp.git\n", stderr: "" } : { code: 0, stdout: "ok", stderr: "" };
+    const checks = await runDiagnostics(base, { exec, pathExists: () => true, home: "/h", probeAgent: probeOk });
+    const remote = checks.find((c) => c.name === "git remote")!;
+    expect(remote.detail).not.toContain("ghp_secret");
+    expect(remote.detail).toContain("https://***@github.com/acme/webapp.git");
+  });
+});
+
 describe("runDiagnostics — live preview", () => {
   const withPreview: TweakletConfig = { ...base, preview: { serviceName: "app-dev", subdir: "frontend", installCheckDir: "frontend/node_modules" } };
   const execWith = (active: boolean): Exec => async (cmd, args) =>

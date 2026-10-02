@@ -29,7 +29,7 @@ const fakeGetClient = async () => ({});
 function appWith(deps: Record<string, unknown> = {}, config: TweakletConfig = base) {
   return createServer(config, {
     exchangeCodeForToken: async () => "tok",
-    fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
+    checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
     runPrompt: fakeRunPrompt,
     getClient: fakeGetClient,
     sessionStore: noopStore(),
@@ -223,12 +223,17 @@ describe("POST /tweaklet/agent/dom-result", () => {
       .expect(404, { ok: false });
   });
 
-  it("400s when requestId or result is missing/malformed", async () => {
-    await request(appWith())
-      .post("/tweaklet/agent/dom-result")
-      .set("Cookie", authCookie)
-      .send({ requestId: "dom_1" })
-      .expect(400);
+  it("during the person's own run: 400s on a malformed body and 413s on an oversized snapshot", async () => {
+    let release: () => void = () => {};
+    const runPrompt = async () => { await new Promise<void>((r) => { release = r; }); return { sessionId: "s1", blocked: [] }; };
+    const app = appWith({ runPrompt });
+    const run = request(app).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "x" }).then((r) => r);
+    await new Promise((r) => setTimeout(r, 50));
+    await request(app).post("/tweaklet/agent/dom-result").set("Cookie", authCookie).send({ requestId: "dom_1" }).expect(400);
+    await request(app).post("/tweaklet/agent/dom-result").set("Cookie", authCookie)
+      .send({ requestId: "x", result: { outerHTML: "a".repeat(40_000) } }).expect(413);
+    release();
+    await run;
   });
 
   it("401s without a session", async () => {
@@ -292,7 +297,7 @@ describe("GET /tweaklet/agent/repos", () => {
   it("returns allowlist and cloned status (authed)", async () => {
     const app = createServer(configWithRepoAllowlist, {
       exchangeCodeForToken: async () => "gho_tok",
-      fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
+      checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
       sessionStore: noopStore(),
     });
     const session = await signInAlice(app);
@@ -314,7 +319,7 @@ describe("POST /tweaklet/agent/clone", () => {
     let cloned: { repoRef: string; token: string } | null = null;
     const app = createServer(configWithRepoAllowlist, {
       exchangeCodeForToken: async () => "gho_tok",
-      fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
+      checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
       cloneRepo: async (repoRef: string, opts: any) => {
         cloned = { repoRef, token: opts.token };
         return "/tmp/src/webapp";
@@ -334,10 +339,11 @@ describe("POST /tweaklet/agent/clone", () => {
   });
 
   it("returns 400 when no repo is configured", async () => {
-    const noRepo = { ...base, repo: undefined };
+    // An explicit access list lets alice sign in even though no repo is configured.
+    const noRepo = { ...base, repo: undefined, access: { allowedLogins: ["alice"] } };
     const app = createServer(noRepo, {
       exchangeCodeForToken: async () => "gho_tok",
-      fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
+      checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
       saveConfig: () => {},
       sessionStore: noopStore(),
     });
@@ -358,7 +364,7 @@ describe("POST /tweaklet/agent/clone", () => {
     const ensurePreviewSpy = vi.fn(async () => ({ started: true, installed: false, restarted: true }));
     const app = createServer(configWithPreview, {
       exchangeCodeForToken: async () => "gho_tok",
-      fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
+      checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
       cloneRepo: async () => "/repo",
       saveConfig: () => {},
       ensurePreview: ensurePreviewSpy,
@@ -384,7 +390,7 @@ describe("POST /tweaklet/agent/clone", () => {
     const ensurePreviewSpy = vi.fn(async () => { throw new Error("systemctl failed"); });
     const app = createServer(configWithPreview, {
       exchangeCodeForToken: async () => "gho_tok",
-      fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
+      checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
       cloneRepo: async () => "/repo",
       saveConfig: () => {},
       ensurePreview: ensurePreviewSpy,

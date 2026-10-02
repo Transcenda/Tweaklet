@@ -919,7 +919,7 @@ describe("GET /tweaklet/setup/verify-agent", () => {
       setupToken: KNOWN_TOKEN,
       sessionStore: noopStore(),
       exchangeCodeForToken: async () => "gho_tok",
-      fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
+      checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
       getClient: async () => ({}),
       smokeTestAgent: smoke,
     } as any);

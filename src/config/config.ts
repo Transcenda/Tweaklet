@@ -18,6 +18,20 @@ import {
 const gitRefName = (s: z.ZodString) =>
   s.refine((v) => !v.startsWith("-"), "must not start with '-'");
 
+/**
+ * An editable-path glob for the agent, relative to the repo. Refuses entries
+ * that would quietly defeat the guardrail: absolute paths, `..`, catch-alls
+ * such as a lone `*` or `**`, and anything inside `.git/`.
+ */
+const guardrailGlob = z.string().min(1).refine((g) => {
+  const e = g.trim().replace(/\\/g, "/");
+  if (e.startsWith("/") || /^[A-Za-z]:/.test(e)) return false;
+  if (e.split("/").includes("..")) return false;
+  if (/^(\*\*?\/?)+(\*(\.\*)?)?$/.test(e)) return false;
+  if (e === ".git" || e.startsWith(".git/")) return false;
+  return true;
+}, "guardrails.allow entries must be repo-relative, without '..', not a catch-all like '**', and not inside .git/");
+
 export const ConfigSchema = z.object({
   github: z
     .object({
@@ -97,7 +111,7 @@ export const ConfigSchema = z.object({
     })
     .optional(),
   guardrails: z
-    .object({ allow: z.array(z.string()).default(["frontend/src/**"]) })
+    .object({ allow: z.array(guardrailGlob).default(["frontend/src/**"]) })
     .default({ allow: ["frontend/src/**"] }),
   setup: z.object({ completed: z.boolean().default(false) }).default({ completed: false }),
 });

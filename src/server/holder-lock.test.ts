@@ -9,6 +9,7 @@ import { makeSessionStore } from "./session-store.js";
 const config: TweakletConfig = {
   github: { clientId: "cid", clientSecret: "sec", oauthBaseUrl: "https://github.com", apiBaseUrl: "https://api.github.com" },
   server: { port: 4319, publicUrl: "http://localhost:4319", sessionSecret: "z".repeat(32), basePath: "/tweaklet" },
+  repo: { path: "", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: ["acme/webapp"] },
   guardrails: { allow: ["src/**"] },
   setup: { completed: true },
   session: { idleMinutes: 30 },
@@ -19,7 +20,7 @@ function harness() {
   let nextUser = { login: "alice", id: 1 };
   const app = createServer(config, {
     exchangeCodeForToken: async () => `tok-${nextUser.login}`,
-    fetchGithubUser: async () => ({ ...nextUser, name: nextUser.login, email: `${nextUser.login}@example.com` }),
+    checkRepoAccess: async () => true, fetchGithubUser: async () => ({ ...nextUser, name: nextUser.login, email: `${nextUser.login}@example.com` }),
     sessionStore: makeSessionStore("/dev/null", { read: () => null, write: () => {} }),
     now: () => clock,
   });

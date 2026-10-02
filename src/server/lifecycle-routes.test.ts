@@ -24,6 +24,7 @@ const lifecycle = {
   switchBranch: async () => {},
   deleteBranch: async () => {},
   branchOwner: async () => null,
+  changedFiles: async () => ["frontend/src/App.tsx"],
   syncIntoBranch: async () => ({ status: "up-to-date" as const }),
   currentBranch: async () => "sandbox/alice-bigger",
   checkpoint: async () => {},
@@ -40,7 +41,7 @@ const lifecycle = {
 };
 
 function app(extra = {}) {
-  return createServer(config, { exchangeCodeForToken: async () => "t", fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }), lifecycle: { ...lifecycle, ...extra }, sessionStore: noopStore() } as any);
+  return createServer(config, { exchangeCodeForToken: async () => "t", checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }), lifecycle: { ...lifecycle, ...extra }, sessionStore: noopStore() } as any);
 }
 
 /**
@@ -100,7 +101,8 @@ describe("lifecycle endpoints", () => {
   });
 
   it("POST /tweaklet/agent/sync 400s when no repo is configured", async () => {
-    const noRepo = createServer({ ...config, repo: undefined }, { exchangeCodeForToken: async () => "t", fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }), lifecycle, sessionStore: noopStore() } as any);
+    // An explicit access list lets alice sign in even though no repo is configured.
+    const noRepo = createServer({ ...config, repo: undefined, access: { allowedLogins: ["alice"] } }, { exchangeCodeForToken: async () => "t", checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }), lifecycle, sessionStore: noopStore() } as any);
     const tok = await signInAlice(noRepo);
     await request(noRepo).post("/tweaklet/agent/sync").set("Cookie", tok).send().expect(400);
   });
@@ -145,11 +147,13 @@ describe("lifecycle endpoints", () => {
     const a = app();
     const tok = await signInAlice(a);
     await request(a).post("/tweaklet/agent/preview/exit").set("Cookie", tok).send().expect(204);
+    // Restore completes a preview: preview the save first, then restore it.
+    await request(a).post("/tweaklet/agent/preview").set("Cookie", tok).send({ sha: "a".repeat(40) }).expect(204);
     await request(a).post("/tweaklet/agent/restore").set("Cookie", tok).send({ sha: "a".repeat(40) }).expect(204);
   });
 
   it("400s when repo is not configured", async () => {
-    const noRepo = createServer({ ...config, repo: undefined }, { exchangeCodeForToken: async () => "t", fetchGithubUser: async () => ({ login: "alice", id: 7 }), lifecycle, sessionStore: noopStore() } as any);
+    const noRepo = createServer({ ...config, repo: undefined }, { exchangeCodeForToken: async () => "t", checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7 }), lifecycle, sessionStore: noopStore() } as any);
     await request(noRepo).post("/tweaklet/agent/idea").set("Cookie", cookie).send({ idea: "x" }).expect(400);
   });
 });

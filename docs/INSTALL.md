@@ -28,14 +28,15 @@ npm install && npm run build:all            # server + web panel
 node dist/index.js serve                    # default port 4319
 ```
 
-On first start while unconfigured the server prints a **setup token** to the log:
+On first start while unconfigured, the server writes a one-time **setup token**
+to `~/.tweaklet/setup-token` (readable only by you; it's kept out of the log)
+and prints where it is:
 
-```
-Tweaklet setup token: <token>
-  (enter it in the setup wizard to configure this server)
+```bash
+cat ~/.tweaklet/setup-token
 ```
 
-Keep this token — you will need it in the next step. You can change the port with `--port <n>` (see `node dist/index.js serve --help`) or set `server.port` in `~/.tweaklet/config.json`.
+You'll need it in the next step. You can change the port with `--port <n>` (see `node dist/index.js serve --help`) or set `server.port` in `~/.tweaklet/config.json`.
 
 ---
 

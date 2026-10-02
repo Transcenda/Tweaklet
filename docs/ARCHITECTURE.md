@@ -55,9 +55,13 @@ starts with a status line saying how current it is.
 - **Local CLI sign-in** (`/auth/cli`) reuses an authenticated `gh` CLI on a
   developer's own machine. It only works for a direct local request (never one
   relayed by a proxy), and it's off when GitHub OAuth is configured.
-- **Access allowlist** (`access.allowedLogins` / `allowedUserIds`) limits who may
-  sign in. **Repo allowlist** (`repo.allowlist`) limits which repositories may be
-  cloned. Users pick from the list and never type a URL.
+- **Who may sign in follows GitHub:** write access to the configured repository
+  (the cloned one, or one on `repo.allowlist` before cloning), checked with the
+  user's own token at sign-in and every 10 minutes while they hold the server.
+  With no repository configured, nobody gets in. `access.allowedLogins` /
+  `allowedUserIds` optionally narrow it further. **Repo allowlist**
+  (`repo.allowlist`) limits which repositories may be cloned; users pick from
+  the list and never type a URL.
 - **Setup token:** until setup completes, the wizard's API requires a one-time
   token printed in the server log.
 

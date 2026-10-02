@@ -52,6 +52,42 @@ tarball (`tweaklet-server.tgz`); install/upgrade with
     `agent.safeCommands`.
   - Sub-agents and access outside the repo are always denied.
   - The panel mounts in a closed shadow root and keeps its own `fetch`.
+- **Access follows GitHub.**
+  - Anyone with write access to the configured repository can sign in,
+    checked with their own token and re-checked every 10 minutes while they
+    hold the server. Removing someone on GitHub removes them from Tweaklet.
+  - With no repository configured, nobody gets in.
+  - `access.allowedLogins` optionally narrows it further.
+- **PRs stay inside the guardrails.** Submitting a change that touches files
+  outside `guardrails.allow` (a CI workflow, say) is refused, and the panel
+  lists the files.
+- **Git and token hardening.**
+  - Authenticated git runs with repo hooks, fsmonitor and credential helpers
+    disabled, over HTTPS only. Pushes skip hooks, and the token never reaches
+    local merges.
+  - The askpass helper only answers the configured host.
+  - Commit IDs from requests must be saves on the current change.
+  - Reusing a clone verifies its origin, and credentials in remote URLs are
+    masked in errors.
+- **The page reader is redacted and visible.**
+  - Values, hidden and password inputs, scripts and token-like strings are
+    removed, and queries are scoped to the page body.
+  - Every read appears in the panel ("👁 The agent looked at …").
+  - Result ids are unguessable, and only the person running the agent can
+    answer, with a size cap.
+- **Safer defaults.**
+  - Guardrail globs that would defeat the guardrail (`**`, absolute paths,
+    `..`, `.git/`) are rejected at config load.
+  - Setup routes fail closed, and the setup token goes to
+    `~/.tweaklet/setup-token` (0600) instead of the log.
+  - Unanswered permission prompts are denied after 10 minutes, and closing
+    the tab stops the agent.
+  - Cross-site POSTs are refused.
+  - opencode's own API needs a per-process password and listens on loopback
+    only.
+  - The widget accepts only its own same-origin script URL.
+  - Embedded pages never show the setup-token prompt.
+  - Picked-element context no longer includes the URL's query string.
 - **Requires the current Node LTS (24+).** Only the current LTS line is supported now (`engines: >=24`). Node 20 reached end-of-life in April 2026. The doctor reports older Node as a failure with an upgrade hint, so upgrade the host's Node before installing this release.
 - `@opencode-ai/sdk` 1.18.34. Install `opencode-ai@1.18.34` on the host to match.
 - Design: [`docs/specs/2026-10-01-branch-workspace-design.md`](docs/specs/2026-10-01-branch-workspace-design.md).

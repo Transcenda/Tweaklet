@@ -4,12 +4,13 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { TweakletConfig, TweakletConfigInput } from "../config/config.js";
 import {
   ConfigSchema,
   loadConfig as realLoadConfig,
   saveConfig as realSaveConfig,
+  configPath,
 } from "../config/config.js";
 import {
   buildAuthorizeUrl,
@@ -18,6 +19,7 @@ import {
   type GithubUser,
 } from "../auth/github-oauth.js";
 import { ghCliUser as realGhCliUser } from "../auth/gh-cli.js";
+import { hasPushAccess as realHasPushAccess } from "../auth/repo-access.js";
 import { sign, verify } from "../auth/signing.js";
 import type { AgentEvent } from "../agent/events.js";
 import { fetchSessionMessages as realFetchSessionMessages, messagesToEvents } from "../agent/history.js";
@@ -30,16 +32,21 @@ import { makeSessionStore } from "./session-store.js";
 import type { SessionStore } from "./session-store.js";
 import { setActivePrompt, resolveDomInspect, type DomResult } from "../agent/dom-inspect.js";
 import * as repoLib from "../git/repo.js";
+import { redactUrlCredentials } from "../git/validate.js";
+import { gitHostFromApiBase } from "../git/token-git.js";
+import { matchesAllow } from "../guardrails/guardrails.js";
 import * as prLib from "../git/pr.js";
 import { refresh as realRefresh } from "../run/live-update.js";
 import { runDiagnostics as realRunDiagnostics } from "../doctor/doctor.js";
-import { cloneAllowedRepo } from "../repo/clone.js";
+import { cloneAllowedRepo, parseRepoRef } from "../repo/clone.js";
 import { ensurePreview as realEnsurePreview } from "../run/preview.js";
 import { computeSetupState } from "./setup-state.js";
 
 export interface ServerDeps {
   exchangeCodeForToken?: typeof realExchange;
   fetchGithubUser?: typeof realFetchUser;
+  /** Does a GitHub user have write access to a repo? Injected in tests. */
+  checkRepoAccess?: typeof realHasPushAccess;
   ghCliUser?: typeof realGhCliUser;
   runPrompt?: typeof realRunPrompt;
   getClient?: () => Promise<any>;
@@ -60,6 +67,7 @@ export interface ServerDeps {
     listBranches: typeof repoLib.listBranches;
     switchBranch: typeof repoLib.switchBranch;
     deleteBranch: typeof repoLib.deleteBranch;
+    changedFiles: typeof repoLib.changedFiles;
     branchOwner: typeof repoLib.branchOwner;
     refresh: typeof realRefresh;
     createDraftPr: typeof prLib.createDraftPr;
@@ -91,6 +99,8 @@ export interface ServerDeps {
   fetchSessionMessages?: typeof realFetchSessionMessages;
   /** Upper bound for /agent/history, so a stuck opencode can't hang the panel. */
   historyTimeoutMs?: number;
+  /** How long a permission ask waits for an answer before it's denied. Injected in tests. */
+  askTimeoutMs?: number;
   /** Clock for the active-user idle timeout. Injected in tests. */
   now?: () => number;
   /** Requests per minute: `api` per signed-in user (or client), `auth` per client. Tests lower these. */
@@ -100,6 +110,7 @@ export interface ServerDeps {
 const SESSION_COOKIE = "apz_session";
 const STATE_COOKIE = "apz_oauth_state";
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const ASK_TIMEOUT_MS = 10 * 60 * 1000;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
 /** What a session cookie carries. `typ` keeps other signed values (like the
@@ -138,16 +149,9 @@ function parseSession(token: string, secret: string, now = Date.now()): SessionC
   return c as SessionClaims;
 }
 
-/**
- * Validate a guardrailsAllow entry.
- * Rejects absolute paths, path-traversal patterns, and over-broad globs.
- */
-function validateGuardrailsEntry(entry: string): boolean {
-  if (typeof entry !== "string") return false;
-  if (entry.startsWith("/")) return false;           // absolute path
-  if (entry.includes("..")) return false;            // path traversal
-  if (entry === "**" || entry === "/**") return false; // over-broad glob
-  return true;
+/** An error for a client: never echo credentials embedded in remote URLs. */
+function errorText(e: unknown): string {
+  return redactUrlCredentials(String(e));
 }
 
 function isAllowed(user: { login?: string; id?: number }, config: TweakletConfig): boolean {
@@ -228,13 +232,14 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   const tweakletHome = process.env.TWEAKLET_HOME && process.env.TWEAKLET_HOME.length > 0
     ? process.env.TWEAKLET_HOME : join(homedir(), ".tweaklet");
   const sessions = deps.sessionStore ?? makeSessionStore(join(tweakletHome, "sessions.json"));
-  const tokenStore = new Map<string, { token: string; name: string; email: string }>();
+  const tokenStore = new Map<string, { token: string; name: string; email: string; accessCheckedAt?: number }>();
   function currentToken(req: Request): { token: string; name: string; email: string } | null {
     const u = currentUser(req);
     return u ? tokenStore.get(u.login) ?? null : null;
   }
   const pendingAsks = new Map<string, { owner: string; resolve: (r: "approve" | "deny") => void }>();
   let agentRunning = false;
+  let runOwner: string | null = null; // whose agent turn is streaming
   let currentAbort: AbortController | null = null;
   let previewing: string | null = null;
   let lastBranch: string | null = null;
@@ -253,6 +258,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     listBranches: repoLib.listBranches,
     switchBranch: repoLib.switchBranch,
     deleteBranch: repoLib.deleteBranch,
+    changedFiles: repoLib.changedFiles,
     branchOwner: repoLib.branchOwner,
     refresh: realRefresh,
     createDraftPr: prLib.createDraftPr,
@@ -274,6 +280,8 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     return true;
   }
   const branchOpts = () => ({ base: config.repo!.baseBranch, prefix: config.repo!.branchPrefix });
+  /** The git host the user's token belongs to (github.com, or a GitHub Enterprise host). */
+  const gitHost = () => gitHostFromApiBase(config.github?.apiBaseUrl ?? "https://api.github.com");
   /** Who auto-saves are attributed to: the GitHub identity when we hold one. */
   function authorFor(req: Request): repoLib.CommitAuthor {
     const t = currentToken(req);
@@ -328,6 +336,49 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   // while a remote caller can't spoof one.
   app.set("trust proxy", "loopback");
   app.use(express.json());
+
+  // ── Who may use Tweaklet: people with write access on GitHub ───────────────
+  // Access follows the repository: anyone who can push to it (directly, via a
+  // team, or as an org admin) may sign in; remove them on GitHub and they lose
+  // Tweaklet too (re-checked every ACCESS_RECHECK_MS while they hold it).
+  // access.allowedLogins / allowedUserIds, when set, narrow this further.
+  const doCheckRepoAccess = deps.checkRepoAccess ?? realHasPushAccess;
+  const ACCESS_RECHECK_MS = 10 * 60_000;
+  let clonedSlug: { owner: string; name: string } | null = null;
+  async function accessRepos(): Promise<{ owner: string; name: string }[]> {
+    if (config.repo?.path) {
+      if (!clonedSlug) {
+        try { clonedSlug = await lc.repoSlugFromRemote(config.repo.path); } catch { clonedSlug = null; }
+      }
+      if (clonedSlug) return [clonedSlug];
+    }
+    return (config.repo?.allowlist ?? []).map((r) => parseRepoRef(r)).filter((r): r is NonNullable<typeof r> => !!r)
+      .map((r) => ({ owner: r.owner, name: r.name }));
+  }
+  const hasExplicitAllowlist = () => !!(config.access?.allowedLogins?.length || config.access?.allowedUserIds?.length);
+  /** May this GitHub user use Tweaklet? `null` = yes, otherwise the reason. */
+  async function accessDenied(user: GithubUser, token: string): Promise<string | null> {
+    if (!isAllowed(user, config)) return `@${user.login} isn't on this server's access list.`;
+    const repos = await accessRepos();
+    if (repos.length === 0) {
+      return hasExplicitAllowlist() ? null : "No repository is configured yet, so nobody can sign in. Ask your admin to finish setup.";
+    }
+    const apiBaseUrl = config.github?.apiBaseUrl ?? "https://api.github.com";
+    for (const r of repos) {
+      if (await doCheckRepoAccess({ token, owner: r.owner, name: r.name, apiBaseUrl })) return null;
+    }
+    const names = repos.map((r) => `${r.owner}/${r.name}`).join(", ");
+    return `@${user.login} doesn't have write access to ${names} on GitHub, so can't use Tweaklet here.`;
+  }
+  /** Re-check the holder's GitHub access in the background; drop them if it's gone. */
+  function recheckAccess(login: string) {
+    const t = tokenStore.get(login);
+    if (!t || now() - (t.accessCheckedAt ?? 0) < ACCESS_RECHECK_MS) return;
+    t.accessCheckedAt = now();
+    void accessDenied({ login, id: -1, name: t.name, email: t.email }, t.token).then((reason) => {
+      if (reason && holder && sameLogin(holder.login, login)) releaseHolder();
+    });
+  }
 
   // ── One active user at a time ("booking") ──────────────────────────────────
   // Whoever signs in holds the server: every action runs under their GitHub
@@ -386,6 +437,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     if (h) {
       if (!sameLogin(h.login, user.login)) return null;
       h.lastSeen = now();
+      recheckAccess(user.login);
       return user;
     }
     if (c.iat <= lastReleaseAt) return null;
@@ -424,6 +476,25 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
 
   // Create a router for all tweaklet routes mounted under basePath
   const router = express.Router();
+
+  // ── Cross-site request protection ─────────────────────────────────────────
+  // The session cookie is SameSite=Lax, which still lets a sibling subdomain
+  // (or an old browser) POST to us. Every state-changing request must come
+  // from our own origin: browsers say so in Sec-Fetch-Site; for older ones we
+  // check Origin. Clients that send neither (CLI, tests) aren't browsers, so
+  // there's no ambient cookie to abuse. /mcp is excluded — it needs its token.
+  const publicOrigin = new URL(config.server.publicUrl).origin;
+  router.use((req, res, next) => {
+    if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS" || req.path.startsWith("/mcp")) return next();
+    const site = req.headers["sec-fetch-site"];
+    const origin = req.headers.origin;
+    const ownOrigin = origin && (origin === publicOrigin || origin === `${req.protocol}://${req.headers.host}`);
+    if ((site && site !== "same-origin" && site !== "none") || (origin && !ownOrigin)) {
+      res.status(403).json({ error: "cross-site request refused" });
+      return;
+    }
+    next();
+  });
 
   // ── Rate limiting ───────────────────────────────────────────────────────────
   // Registered before every route. API calls are counted per signed-in user,
@@ -485,7 +556,12 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
         return;
       }
     } catch {
-      // No config file yet — setup hasn't run, allow through.
+      // Unreadable config: only treat it as "setup not done yet" if this
+      // server also started unconfigured — never reopen a finished setup.
+      if (config.setup.completed) {
+        res.status(410).json({ error: "setup already completed" });
+        return;
+      }
     }
     next();
   }
@@ -498,9 +574,9 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
    */
   function setupAuthGuard(req: Request, res: Response, next: NextFunction) {
     if (!activeSetupToken) {
-      // Setup already completed at server start — setupLockGuard will 410 first,
-      // but be defensive.
-      next();
+      // Setup was already complete when this server started: there is no
+      // token, so nothing may pass (fail closed, even if the config changes).
+      res.status(410).json({ error: "setup already completed" });
       return;
     }
     const header =
@@ -742,9 +818,10 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
         oauthBaseUrl: config.github.oauthBaseUrl,
       });
       const user = await fetchUser({ token, apiBaseUrl: config.github.apiBaseUrl });
-      if (!isAllowed(user, config)) {
+      const denied = await accessDenied(user, token);
+      if (denied) {
         res.clearCookie(STATE_COOKIE, { path: basePath });
-        res.status(403).json({ error: "not authorized", detail: `${user.login} is not on the access allowlist` });
+        signInResultPage(res, 403, false, denied);
         return;
       }
       if (!claimHold(user.login)) {
@@ -752,12 +829,12 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
         signInResultPage(res, 423, false, busyMessage());
         return;
       }
-      tokenStore.set(user.login, { token, name: user.name, email: user.email });
+      tokenStore.set(user.login, { token, name: user.name, email: user.email, accessCheckedAt: now() });
       setSession(res, user);
       res.clearCookie(STATE_COOKIE, { path: basePath });
       signInResultPage(res, 200, true);
     } catch (e) {
-      res.status(502).json({ error: "oauth failed", detail: String(e) });
+      res.status(502).json({ error: "oauth failed", detail: errorText(e) });
     }
   });
 
@@ -820,6 +897,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     }
     const user = currentUser(req)!;
     agentRunning = true;
+    runOwner = user.login;
     res.status(200).set({
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -832,16 +910,26 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     const domPending = new Map<string, (r: DomResult) => void>();
     setActivePrompt({ send: (e: unknown) => res.write(`data: ${JSON.stringify(e)}\n\n`), pending: domPending });
     currentAbort = new AbortController();
+    // Closing the tab (or losing the connection) stops the run, rather than
+    // leaving an unsupervised agent working and the change locked.
+    const abortOnClose = currentAbort;
+    res.on("close", () => { if (!res.writableEnded) abortOnClose.abort(); });
+    // An unanswered ask (person walked away) is denied after ASK_TIMEOUT_MS
+    // instead of holding the agent — and the server — forever.
     const onAsk = (r: { permissionID: string; permission: string; patterns: string[]; diff?: string }) =>
       new Promise<"approve" | "deny">((resolve) => {
-        pendingAsks.set(r.permissionID, { owner: user.login, resolve });
+        const timer = setTimeout(() => {
+          if (pendingAsks.delete(r.permissionID)) resolve("deny");
+        }, deps.askTimeoutMs ?? ASK_TIMEOUT_MS);
+        timer.unref?.();
+        pendingAsks.set(r.permissionID, { owner: user.login, resolve: (v) => { clearTimeout(timer); resolve(v); } });
         send({ type: "permission_ask", permissionID: r.permissionID, permission: r.permission, patterns: r.patterns, diff: r.diff } as any);
       });
     try {
       // A prompt never runs on the base branch: start a fresh change (cut from
       // the latest base) first, so every edit is isolated and reviewable.
       if (config.repo?.path && (await lc.currentBranch(config.repo.path)) === config.repo.baseBranch) {
-        const started = await lc.startBranch(config.repo.path, { ...branchOpts(), idea: titleFromPrompt(prompt), token: currentToken(req)?.token ?? "", author: authorFor(req), owner: user.login });
+        const started = await lc.startBranch(config.repo.path, { ...branchOpts(), idea: titleFromPrompt(prompt), token: currentToken(req)?.token ?? "", author: authorFor(req), owner: user.login, gitHost: gitHost() });
         sessions.delete(keyFor(user.login, started.branch));
         previewing = null;
         send({ type: "branch", ...started } as any);
@@ -855,6 +943,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
         model: config.agent!.model!,
         prompt,
         allow: config.guardrails.allow,
+        repoRoot: config.repo?.path || undefined,
         mode: approvalMode(),
         safeCommands: config.agent?.safeCommands ?? DEFAULT_SAFE_COMMANDS,
         onEvent: send,
@@ -870,6 +959,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     } finally {
       setActivePrompt(null);
       agentRunning = false;
+      runOwner = null;
       if (holder) holder.lastSeen = now(); // a long agent turn counts as activity
       currentAbort = null;
       res.end();
@@ -877,6 +967,14 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   });
 
   router.post("/agent/dom-result", authGate, (req, res) => {
+    // Only the person whose agent turn asked may answer, and only with a
+    // bounded page snapshot.
+    if (!runOwner || !sameLogin(runOwner, currentUser(req)!.login)) {
+      res.status(404).json({ ok: false }); return;
+    }
+    if (JSON.stringify(req.body ?? {}).length > 32_768) {
+      res.status(413).json({ error: "page snapshot too large" }); return;
+    }
     const { requestId, result } = req.body ?? {};
     if (typeof requestId !== "string" || typeof result !== "object" || result == null) {
       res.status(400).json({ error: "requestId + result required" }); return;
@@ -915,7 +1013,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       res.json({ path });
     } catch (e) {
       const msg = String(e);
-      res.status(msg.includes("allowlist") ? 400 : 500).json({ error: msg });
+      res.status(msg.includes("allowlist") ? 400 : 500).json({ error: redactUrlCredentials(msg) });
     }
   });
 
@@ -931,12 +1029,12 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       // best-effort no-op and the change starts from the local base, so starting a
       // change must NOT require a token (only clone/PR, which truly hit GitHub, do).
       const tok = currentToken(req);
-      const started = await lc.startBranch(config.repo!.path!, { ...branchOpts(), idea, token: tok?.token ?? "", author: authorFor(req), owner: user.login });
+      const started = await lc.startBranch(config.repo!.path!, { ...branchOpts(), idea, token: tok?.token ?? "", author: authorFor(req), owner: user.login, gitHost: gitHost() });
       sessions.delete(keyFor(user.login, started.branch)); // a new change starts with fresh memory
       previewing = null; lastBranch = null;
       await syncPreview();
       res.json(started);
-    } catch (e) { res.status(500).json({ error: String(e) }); }
+    } catch (e) { res.status(500).json({ error: errorText(e) }); }
   });
 
   // On-demand "sync with base": merge the latest origin/<base> INTO the current
@@ -947,9 +1045,9 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     const tok = currentToken(req);
     if (!tok) { res.status(401).json({ error: "sign in again" }); return; }
     try {
-      const result = await lc.syncIntoBranch(config.repo!.path!, config.repo!.baseBranch, tok.token);
+      const result = await lc.syncIntoBranch(config.repo!.path!, config.repo!.baseBranch, tok.token, gitHost());
       res.json(result);
-    } catch (e) { res.status(500).json({ error: String(e) }); }
+    } catch (e) { res.status(500).json({ error: errorText(e) }); }
   });
 
   router.post("/agent/checkpoint", authGate, async (req, res) => {
@@ -964,13 +1062,13 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       }
       await lc.checkpoint(config.repo!.path!, message, { name: tok.name, email: tok.email });
       res.status(204).end();
-    } catch (e) { res.status(500).json({ error: String(e) }); }
+    } catch (e) { res.status(500).json({ error: errorText(e) }); }
   });
 
   router.post("/agent/undo", authGate, async (_req, res) => {
     if (!requireRepo(res)) return;
     try { await lc.discard(config.repo!.path!); res.status(204).end(); }
-    catch (e) { res.status(500).json({ error: String(e) }); }
+    catch (e) { res.status(500).json({ error: errorText(e) }); }
   });
 
   // Reject the agent's work entirely: discard all changes and return to the base
@@ -978,19 +1076,28 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   router.post("/agent/reject", authGate, async (req, res) => {
     if (!requireRepo(res)) return;
     try {
-      sessions.delete(await sessionKey(currentUser(req)!.login));
+      // Discarding deletes the change for good — same rule as delete: only
+      // whoever started it (changes from before owners were recorded stay open).
+      const login = currentUser(req)!.login;
+      const branch = await lc.currentBranch(config.repo!.path!);
+      const owner = branch !== config.repo!.baseBranch ? await lc.branchOwner(config.repo!.path!, branch) : null;
+      if (owner && !sameLogin(owner, login)) {
+        res.status(403).json({ error: `only @${owner} can discard this change` });
+        return;
+      }
+      sessions.delete(await sessionKey(login));
       await lc.reject(config.repo!.path!, {
         base: config.repo!.prTarget,
         prefix: config.repo!.branchPrefix,
       });
       res.status(204).end();
-    } catch (e) { res.status(500).json({ error: String(e) }); }
+    } catch (e) { res.status(500).json({ error: errorText(e) }); }
   });
 
   router.post("/agent/refresh", authGate, async (_req, res) => {
     if (!requireRepo(res)) return;
     try { res.json(await lc.refresh(config.run ?? { liveUpdate: "hot-reload" }, config.repo!.path!)); }
-    catch (e) { res.status(500).json({ error: String(e) }); }
+    catch (e) { res.status(500).json({ error: errorText(e) }); }
   });
 
   router.post("/agent/pr", authGate, async (req, res) => {
@@ -1004,9 +1111,17 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       const body = String(req.body?.body ?? `Prototyped via tweaklet by ${user.login}.`);
       const slug = await lc.repoSlugFromRemote(config.repo!.path!);
       const apiBaseUrl = config.github?.apiBaseUrl ?? "https://api.github.com";
+      // A PR may only carry what the guardrails let the agent edit — never a CI
+      // workflow, build script or anything else an approved command wrote.
+      const outside = (await lc.changedFiles(config.repo!.path!, config.repo!.baseBranch))
+        .filter((f) => !matchesAllow(f, config.guardrails.allow));
+      if (outside.length) {
+        res.status(409).json({ error: "this change touches files outside the editable area, so it can't be submitted", files: outside.slice(0, 50) });
+        return;
+      }
       const url = await lc.createDraftPr(config.repo!.path!, { branch, title, body, base: config.repo!.prTarget, owner: slug.owner, repo: slug.name, token: tok.token, apiBaseUrl });
       res.json({ url });
-    } catch (e) { res.status(500).json({ error: String(e) }); }
+    } catch (e) { res.status(500).json({ error: errorText(e) }); }
   });
 
   router.get("/agent/pr", authGate, async (req, res) => {
@@ -1018,7 +1133,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       const slug = await lc.repoSlugFromRemote(config.repo!.path!);
       const apiBaseUrl = config.github?.apiBaseUrl ?? "https://api.github.com";
       res.json(await lc.prStatus(config.repo!.path!, { branch, owner: slug.owner, repo: slug.name, token: tok.token, apiBaseUrl }));
-    } catch (e) { res.status(500).json({ error: String(e) }); }
+    } catch (e) { res.status(500).json({ error: errorText(e) }); }
   });
 
   router.get("/agent/state", authGate, async (_req, res) => {
@@ -1026,7 +1141,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     try {
       const st = await lc.branchState(config.repo!.path!, config.repo!.baseBranch);
       res.json({ ...st, previewing });
-    } catch (e) { res.status(500).json({ error: String(e) }); }
+    } catch (e) { res.status(500).json({ error: errorText(e) }); }
   });
 
   // ── Change workspace: list / switch / delete Tweaklet branches ─────────────
@@ -1035,7 +1150,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     try {
       const path = config.repo!.path!;
       res.json({ base: config.repo!.baseBranch, current: await lc.currentBranch(path), branches: await lc.listBranches(path, branchOpts()) });
-    } catch (e) { res.status(500).json({ error: String(e) }); }
+    } catch (e) { res.status(500).json({ error: errorText(e) }); }
   });
 
   router.post("/agent/branches/switch", authGate, async (req, res) => {
@@ -1049,7 +1164,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       res.json({ branch });
     } catch (e) {
       const msg = String(e);
-      res.status(/not a Tweaklet change|no such change|invalid branch/.test(msg) ? 400 : 500).json({ error: msg });
+      res.status(/not a Tweaklet change|no such change|invalid branch/.test(msg) ? 400 : 500).json({ error: redactUrlCredentials(msg) });
     }
   });
 
@@ -1073,7 +1188,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       res.status(204).end();
     } catch (e) {
       const msg = String(e);
-      res.status(/not a Tweaklet change|no such change|invalid branch/.test(msg) ? 400 : 500).json({ error: msg });
+      res.status(/not a Tweaklet change|no such change|invalid branch/.test(msg) ? 400 : 500).json({ error: redactUrlCredentials(msg) });
     }
   });
 
@@ -1108,7 +1223,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       await lc.previewCommit(config.repo!.path!, sha);
       previewing = sha;
       res.status(204).end();
-    } catch (e) { res.status(500).json({ error: String(e) }); }
+    } catch (e) { res.status(500).json({ error: errorText(e) }); }
   });
 
   router.post("/agent/preview/exit", authGate, async (_req, res) => {
@@ -1117,7 +1232,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       await lc.exitPreview(config.repo!.path!, lastBranch ?? config.repo!.baseBranch);
       previewing = null;
       res.status(204).end();
-    } catch (e) { res.status(500).json({ error: String(e) }); }
+    } catch (e) { res.status(500).json({ error: errorText(e) }); }
   });
 
   router.post("/agent/restore", authGate, async (req, res) => {
@@ -1126,11 +1241,17 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     if (!tok) { res.status(401).json({ error: "sign in again" }); return; }
     const sha = String(req.body?.sha ?? "");
     if (!sha) { res.status(400).json({ error: "no sha" }); return; }
+    // Restore is the second half of preview: only the save being previewed,
+    // onto the change it came from — never onto the base.
+    if (!previewing || !lastBranch || sha !== previewing) {
+      res.status(409).json({ error: "preview the save you want to restore first" });
+      return;
+    }
     try {
-      await lc.restoreCommit(config.repo!.path!, lastBranch ?? config.repo!.baseBranch, sha, { name: tok.name, email: tok.email });
+      await lc.restoreCommit(config.repo!.path!, lastBranch, sha, { name: tok.name, email: tok.email });
       previewing = null;
       res.status(204).end();
-    } catch (e) { res.status(500).json({ error: String(e) }); }
+    } catch (e) { res.status(500).json({ error: errorText(e) }); }
   });
 
   // Serve the built, self-mounting library bundle. The web Vite build (build.lib)
@@ -1209,10 +1330,17 @@ export function serve(config: TweakletConfig): void {
   createServer(config, { setupToken }).listen(config.server.port, config.server.host ?? "127.0.0.1", () => {
     console.log(`Tweaklet listening on ${config.server.publicUrl}`);
     if (setupToken) {
-      console.log(
-        `\nTweaklet setup token: ${setupToken}\n` +
-        `  (enter it in the setup wizard to configure this server)\n`,
-      );
+      // Kept out of the log (journals are often readable by other users): it
+      // goes to a 0600 file next to the config, and only the path is printed.
+      const tokenFile = join(dirname(configPath()), "setup-token");
+      try {
+        mkdirSync(dirname(tokenFile), { recursive: true, mode: 0o700 });
+        writeFileSync(tokenFile, setupToken + "\n", { mode: 0o600 });
+        chmodSync(tokenFile, 0o600);
+        console.log(`\nTweaklet isn't set up yet. Your one-time setup token is in ${tokenFile}\n  (read it with: cat ${tokenFile} — then enter it in the setup wizard)\n`);
+      } catch (e) {
+        console.warn("Tweaklet: could not write the setup token file:", String(e));
+      }
     }
     // Self-heal the live preview on start (e.g. after a VM reboot left the dev
     // server stopped, or the clone's deps drifted). Non-fatal.
@@ -1227,7 +1355,7 @@ export function serve(config: TweakletConfig): void {
   });
 
   // Graceful shutdown: close the opencode child so it dies WITH the service.
-  // opencode binds a fixed port (4096); a child orphaned on restart blocks the
+  // opencode prefers port 4096 (falling back to a free one); a child orphaned on restart can block the
   // next instance from binding it ("ServeError"). Closing on SIGTERM/SIGINT
   // (systemctl restart sends SIGTERM) prevents the orphan.
   let _shuttingDown = false;
