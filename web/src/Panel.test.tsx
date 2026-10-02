@@ -19,6 +19,7 @@ const { apiMock, streamPrompt } = vi.hoisted(() => {
     exitPreview: vi.fn(),
     restore: vi.fn(),
     repos: vi.fn(),
+    authStatus: vi.fn(),
     clone: vi.fn(),
     history: vi.fn(),
     branches: vi.fn(),
@@ -32,7 +33,7 @@ vi.mock("./api.js", () => ({ api: apiMock, streamPrompt, getBase: () => "" }));
 
 // Mock auth so Panel tests can control signIn() behaviour.
 const { authMock } = vi.hoisted(() => {
-  const authMock = { signIn: vi.fn() };
+  const authMock = { signIn: vi.fn(), lastSignInMessage: vi.fn(() => "") };
   return { authMock };
 });
 vi.mock("./auth.js", () => authMock);
@@ -62,6 +63,7 @@ beforeEach(() => {
   apiMock.restore.mockResolvedValue(undefined);
   // Default: repos resolves with cloned=true so all existing tests see the normal agent UI.
   apiMock.repos.mockResolvedValue({ allowlist: [], cloned: true });
+  apiMock.authStatus.mockResolvedValue({ inUse: false, idleMinutes: 30 });
   apiMock.clone.mockResolvedValue({ path: "/tmp/repo" });
   // Default: history resolves with empty events (no prior conversation).
   apiMock.history.mockResolvedValue({ events: [], sessionId: undefined });
@@ -663,5 +665,23 @@ describe("Panel", () => {
     fireEvent.click(screen.getByRole("button", { name: /reconnect/i }));
     await waitFor(() => expect(authMock.signIn).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByText(/github connection expired/i)).not.toBeInTheDocument());
+  });
+
+  describe("sign-in screen when a teammate is using Tweaklet", () => {
+    it("says so up front, without naming them", async () => {
+      apiMock.me.mockResolvedValue(null);
+      apiMock.authStatus.mockResolvedValue({ inUse: true, idleMinutes: 30, freeInMinutes: 12 });
+      render(<Panel />);
+      expect(await screen.findByText(/in use by a teammate right now/i)).toHaveTextContent("about 12 min from now");
+    });
+
+    it("shows why sign-in was refused", async () => {
+      apiMock.me.mockResolvedValue(null);
+      authMock.signIn.mockResolvedValue("denied");
+      authMock.lastSignInMessage.mockReturnValue("Tweaklet is in use by @alice right now.");
+      render(<Panel />);
+      fireEvent.click(await screen.findByRole("button", { name: /continue with github/i }));
+      expect(await screen.findByText("Tweaklet is in use by @alice right now.")).toBeInTheDocument();
+    });
   });
 });

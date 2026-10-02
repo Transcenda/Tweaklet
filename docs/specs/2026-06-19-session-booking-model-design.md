@@ -1,6 +1,6 @@
 # Tweaklet — Single-Active-Session "Booking" Model + Session Hardening (design)
 
-> **Status:** Partly implemented — only the companion setup-flow reframe shipped (sign-in as client verification, repo step as an allowlist editor); the booking model itself (holder state, takeover, idle timeout, token purge on release), the open-allowlist doctor warning and the GitHub App migration were never built, and concurrent use is instead handled by v0.0.5's tree lock and per-change branches (see docs/ARCHITECTURE.md § Change workspace and `2026-10-01-branch-workspace-design.md`).
+> **Status:** Partly implemented — the core booking model shipped in v0.0.5 in a simplified form: whoever signs in holds the server; others are refused at sign-in until the holder signs out or goes idle (`session.idleMinutes`, default 30; a running agent counts as activity); on release the holder's GitHub token is erased and their session stops counting. Not built: the request/hand-over takeover handshake and the GitHub App migration. See docs/ARCHITECTURE.md § Identity and access.
 
 **Date:** 2026-06-19 (approved direction; this was the planned "Phase 2" session work).
 **Builds on:** the per-user OAuth model (`2026-06-18-per-user-github-oauth-design.md`, already implemented). That made git run under each user's OAuth token; this bounds the *session lifecycle* and enforces *one active user at a time*.

@@ -21,8 +21,9 @@ describe("rate limiting", () => {
     for (let i = 0; i < 3; i++) await request(a).get("/tweaklet/agent/me").set("Cookie", cookieFor("alice", 1)).expect(200);
     const limited = await request(a).get("/tweaklet/agent/me").set("Cookie", cookieFor("alice", 1)).expect(429);
     expect(limited.body.error).toMatch(/too many requests/i);
-    // Same IP, different user → its own budget.
-    await request(a).get("/tweaklet/agent/me").set("Cookie", cookieFor("bob", 2)).expect(200);
+    // Same IP, different user → a separate budget: bob isn't rate-limited (he's
+    // refused only because alice holds the server — one active user at a time).
+    await request(a).get("/tweaklet/agent/me").set("Cookie", cookieFor("bob", 2)).expect(401);
   });
 
   it("limits sign-in attempts per client", async () => {

@@ -1,6 +1,10 @@
 import { api, getBase } from "./api.js";
 
-export type SignInResult = "signed-in" | "closed" | "timeout";
+export type SignInResult = "signed-in" | "closed" | "timeout" | "denied";
+
+let lastMessage = "";
+/** Why the last sign-in was refused (e.g. someone else is using Tweaklet). */
+export function lastSignInMessage(): string { return lastMessage; }
 
 /**
  * Open GitHub sign-in in a popup window and wait for the OAuth round-trip to
@@ -18,6 +22,7 @@ export type SignInResult = "signed-in" | "closed" | "timeout";
  * refresh the user state they are tracking.
  */
 export function signIn(): Promise<SignInResult> {
+  lastMessage = "";
   const url = `${getBase()}/auth/login`;
   const popup = window.open(url, "tweaklet-signin", "width=520,height=680");
 
@@ -45,6 +50,9 @@ export function signIn(): Promise<SignInResult> {
       if (event.origin !== window.location.origin) return;
       if (event.data?.type === "tweaklet:signed-in") {
         finish("signed-in");
+      } else if (event.data?.type === "tweaklet:sign-in-failed") {
+        lastMessage = String(event.data.message ?? "Sign-in was refused.");
+        finish("denied");
       }
     }
     window.addEventListener("message", onMessage);

@@ -78,6 +78,12 @@ export const ConfigSchema = z.object({
       rebuildCommand: z.string().optional(),
     })
     .optional(),
+  session: z
+    .object({
+      /** Minutes of inactivity after which the active user's hold on the server is released. */
+      idleMinutes: z.number().int().positive().default(30),
+    })
+    .optional(),
   access: z
     .object({
       allowedLogins: z.array(z.string()).optional(),

@@ -61,6 +61,8 @@ export const api = {
   restore: (sha: string) => post<void>(`${getBase()}/agent/restore`, { sha }),
   doctor: () => get<{ checks: DoctorCheck[] }>(`${getBase()}/agent/doctor`),
   repos: () => get<{ allowlist: string[]; cloned: boolean }>(`${getBase()}/agent/repos`),
+  /** Anonymous: is someone else using this server right now? */
+  authStatus: () => get<{ inUse: boolean; idleMinutes: number; freeInMinutes?: number }>(`${getBase()}/auth/status`),
   stop: () => post<void>(`${getBase()}/agent/stop`),
   respondPermission: (permissionID: string, response: "approve" | "deny") =>
     post<void>(`${getBase()}/agent/permission`, { permissionID, response }),

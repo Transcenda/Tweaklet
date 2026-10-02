@@ -27,6 +27,19 @@ tarball (`tweaklet-server.tgz`); install/upgrade with
 - **Reconnect nudge** when the server has lost the GitHub token (e.g. after a
   restart). Without the token it can't fetch the latest base or submit.
 - The ↩ recovery button now undoes unsaved edits instead of deleting the change.
+- **One active user at a time.** Signing in holds the server under that
+  person's GitHub identity. Others are told it's in use, and when it frees up,
+  until the holder signs out or is idle for `session.idleMinutes` (default 30).
+  On release the holder's token is erased.
+- **Security hardening.**
+  - Local-only routes stay local behind a reverse proxy: the DOM-inspect MCP
+    endpoint needs a per-process token, and `gh` CLI sign-in needs a direct
+    local request and is off when OAuth is configured.
+  - The server binds to `127.0.0.1` by default (`server.host` overrides it).
+  - Sessions expire, are revocable and purpose-tagged, and the cookie is
+    `Secure` and scoped to the base path.
+  - API and sign-in routes are rate-limited.
+  - Dependencies audit clean.
 - **Requires the current Node LTS (24+).** Only the current LTS line is supported now (`engines: >=24`). Node 20 reached end-of-life in April 2026. The doctor reports older Node as a failure with an upgrade hint, so upgrade the host's Node before installing this release.
 - `@opencode-ai/sdk` 1.18.34. Install `opencode-ai@1.18.34` on the host to match.
 - Design: [`docs/specs/2026-10-01-branch-workspace-design.md`](docs/specs/2026-10-01-branch-workspace-design.md).

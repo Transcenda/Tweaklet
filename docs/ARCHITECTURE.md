@@ -44,8 +44,17 @@ starts with a status line saying how current it is.
   `GIT_ASKPASS` helper (`src/git/token-git.ts`). Commits and pull requests are
   authored as that user. A restart drops the tokens, so `/agent/me` reports
   `needsReauth` and the panel asks the user to reconnect.
-- **Local CLI sign-in** (`/auth/cli`) reuses an authenticated `gh` CLI. It is
-  loopback-only and meant for a developer's own machine.
+- **One active user at a time.** Whoever signs in holds the server, so every
+  action runs under one identity. Anyone else is refused at sign-in, with a
+  note saying when the server frees up, until the holder signs out or goes idle
+  (`session.idleMinutes`, default 30; a running agent counts as activity). On
+  release the holder's token is erased and their session stops counting.
+- **Sessions** are signed, purpose-tagged and expire after 12 hours. Logout
+  revokes them on the server. The cookie is `HttpOnly`, `SameSite=Lax`,
+  `Secure` on HTTPS, and scoped to the base path.
+- **Local CLI sign-in** (`/auth/cli`) reuses an authenticated `gh` CLI on a
+  developer's own machine. It only works for a direct local request (never one
+  relayed by a proxy), and it's off when GitHub OAuth is configured.
 - **Access allowlist** (`access.allowedLogins` / `allowedUserIds`) limits who may
   sign in. **Repo allowlist** (`repo.allowlist`) limits which repositories may be
   cloned. Users pick from the list and never type a URL.

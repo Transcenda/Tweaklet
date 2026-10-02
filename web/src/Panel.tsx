@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, streamPrompt, getBase, type User, type DoctorCheck, type Branches, type ChangeBranch } from "./api.js";
-import { signIn } from "./auth.js";
+import { signIn, lastSignInMessage } from "./auth.js";
 import { formatContext, type PickedElement, type PageContext } from "./contextCapture.js"; // PageContext used in getPageContext return type
 import { startPick, highlightElement, clearHighlight } from "./picker.js";
 import { inspectDom } from "./dom-inspect.js";
@@ -254,7 +254,16 @@ export function Panel() {
   const [cloning, setCloning] = useState(false);
   const [cloneErr, setCloneErr] = useState("");
 
+  const [signInNote, setSignInNote] = useState("");
   useEffect(() => { api.me().then(setUser).catch(() => setUser(null)); }, []);
+  // On the sign-in screen, say up front if a teammate is using Tweaklet.
+  useEffect(() => {
+    if (user !== null) return;
+    api.authStatus().then((s) => {
+      if (s.inUse) setSignInNote(`Tweaklet is in use by a teammate right now. It frees up when they sign out, or after ${s.idleMinutes} minutes of inactivity${s.freeInMinutes !== undefined ? ` (about ${s.freeInMinutes} min from now)` : ""}.`);
+      else setSignInNote("");
+    }).catch(() => {});
+  }, [user]);
   useEffect(() => { if (user) api.doctor().then((d) => setChecks(d.checks)).catch(() => {}); }, [user]);
   useEffect(() => { if (user) refreshState(); }, [user]);
   useEffect(() => { if (user) api.repos().then(setRepoState).catch(() => {}); }, [user]);
@@ -290,11 +299,14 @@ export function Panel() {
               if (result === "signed-in") {
                 const u = await api.me();
                 setUser(u);
+              } else if (result === "denied") {
+                setSignInNote(lastSignInMessage());
               }
             }}
           >
             Continue with GitHub
           </button>
+          {signInNote && <p className="apz-signin-note" role="status">{signInNote}</p>}
         </div>
       </div>
     );
@@ -592,6 +604,7 @@ export function Panel() {
   async function reconnect() {
     const result = await signIn();
     if (result === "signed-in") setUser(await api.me());
+    else if (result === "denied") push({ kind: "error", text: lastSignInMessage() });
   }
 
   const health = overall(checks);

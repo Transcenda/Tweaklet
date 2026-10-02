@@ -90,6 +90,8 @@ export interface ServerDeps {
   fetchSessionMessages?: typeof realFetchSessionMessages;
   /** Upper bound for /agent/history, so a stuck opencode can't hang the panel. */
   historyTimeoutMs?: number;
+  /** Clock for the active-user idle timeout. Injected in tests. */
+  now?: () => number;
   /** Requests per minute: `api` per signed-in user (or client), `auth` per client. Tests lower these. */
   rateLimit?: { api?: number; auth?: number };
 }
@@ -321,30 +323,91 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   app.set("trust proxy", "loopback");
   app.use(express.json());
 
+  // ── One active user at a time ("booking") ──────────────────────────────────
+  // Whoever signs in holds the server: every action runs under their GitHub
+  // identity, so nobody else can sign in until they sign out or go idle. On
+  // release their GitHub token is erased and their session stops counting.
+  const now = deps.now ?? Date.now;
+  const idleMs = (config.session?.idleMinutes ?? 30) * 60_000;
+  let holder: { login: string; lastSeen: number } | null = null;
+  // Sessions issued before the last release (sign-out / idle) can't re-take the
+  // hold by themselves; after a server restart (nothing released yet) the first
+  // valid session to come back takes it.
+  let lastReleaseAt = 0;
+  const sameLogin = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+  function releaseHolder() {
+    if (holder) tokenStore.delete(holder.login);
+    holder = null;
+    lastReleaseAt = now();
+  }
+  /** The current holder, after releasing one who has been idle too long. */
+  function activeHolder() {
+    if (holder && !agentRunning && now() - holder.lastSeen > idleMs) releaseHolder();
+    return holder;
+  }
+  /** Take (or refresh) the hold for `login`; false if someone else holds it. */
+  function claimHold(login: string): boolean {
+    const h = activeHolder();
+    if (h && !sameLogin(h.login, login)) return false;
+    holder = { login, lastSeen: now() };
+    return true;
+  }
+  function holdBusyMinutes(): number {
+    return holder ? Math.max(0, Math.ceil((holder.lastSeen + idleMs - now()) / 60_000)) : 0;
+  }
+
   // Sessions revoked by logout (sid → expiry), pruned as they expire.
   const revokedSessions = new Map<string, number>();
   function revoke(claims: SessionClaims) {
-    const now = Date.now();
-    for (const [sid, exp] of revokedSessions) if (exp <= now) revokedSessions.delete(sid);
+    const t = now();
+    for (const [sid, exp] of revokedSessions) if (exp <= t) revokedSessions.delete(sid);
     revokedSessions.set(claims.sid, claims.exp);
   }
   function sessionClaims(req: Request): SessionClaims | null {
     const tok = parseCookies(req)[SESSION_COOKIE];
-    const c = tok ? parseSession(tok, secret) : null;
+    const c = tok ? parseSession(tok, secret, now()) : null;
     return c && !revokedSessions.has(c.sid) ? c : null;
   }
   /** The signed-in user — only for a valid, unexpired, unrevoked session of
-   *  someone who is (still) allowed in. Re-checked on every request. */
+   *  someone who is (still) allowed in AND currently holds the server. A
+   *  session issued before an idle release no longer counts: sign in again. */
   function currentUser(req: Request): GithubUser | null {
     const c = sessionClaims(req);
     if (!c) return null;
     const user: GithubUser = { login: c.login, id: c.id, name: c.name ?? c.login, email: c.email ?? "" };
-    return isAllowed(user, config) ? user : null;
+    if (!isAllowed(user, config)) return null;
+    const h = activeHolder();
+    if (h) {
+      if (!sameLogin(h.login, user.login)) return null;
+      h.lastSeen = now();
+      return user;
+    }
+    if (c.iat <= lastReleaseAt) return null;
+    return claimHold(user.login) ? user : null;
   }
+  /** The page the sign-in popup lands on: tells the opener (same origin only)
+   *  how sign-in went, then closes; falls back to text/redirect if opened directly. */
+  function signInResultPage(res: Response, status: number, ok: boolean, message = "") {
+    const payload = JSON.stringify(ok ? { type: "tweaklet:signed-in" } : { type: "tweaklet:sign-in-failed", message })
+      .replace(/</g, "\\u003c");
+    const text = (ok ? "Signed in — you may close this window." : message).replace(/[&<>"]/g, (ch) => `&#${ch.charCodeAt(0)};`);
+    res.status(status).type("html").send(
+      `<!doctype html><html><head><meta charset="utf-8"><title>Tweaklet — ${ok ? "signed in" : "sign-in"}</title></head><body>` +
+      `<script>` +
+      `if(window.opener){window.opener.postMessage(${payload},window.location.origin);window.close();}` +
+      (ok ? `else{window.location.replace(${JSON.stringify(basePath + "/")});}` : ``) +
+      `</script><p>${text}</p></body></html>`,
+    );
+  }
+  function busyMessage(): string {
+    const mins = holdBusyMinutes();
+    return `Tweaklet is in use by @${holder!.login} right now. It frees up when they sign out, or after ${config.session?.idleMinutes ?? 30} minutes of inactivity (about ${mins} min from now).`;
+  }
+
   const secureCookies = config.server.publicUrl.startsWith("https://");
   const cookieBase = { httpOnly: true, sameSite: "lax" as const, secure: secureCookies, path: basePath };
   function setSession(res: Response, user: GithubUser) {
-    res.cookie(SESSION_COOKIE, issueSessionToken(user, secret), { ...cookieBase, maxAge: SESSION_TTL_MS });
+    res.cookie(SESSION_COOKIE, issueSessionToken(user, secret, now()), { ...cookieBase, maxAge: SESSION_TTL_MS });
     res.clearCookie(SESSION_COOKIE, { path: "/" }); // legacy root-scoped cookie from older versions
   }
 
@@ -620,8 +683,16 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       res.status(403).json({ error: "not authorized", detail: `${user.login} is not on the access allowlist` });
       return;
     }
+    if (!claimHold(user.login)) { signInResultPage(res, 423, false, busyMessage()); return; }
     setSession(res, user);
     res.redirect(`${basePath}/`);
+  });
+
+  // For the sign-in screen: is someone else using this server? Deliberately
+  // anonymous — it never says who.
+  router.get("/auth/status", (_req, res) => {
+    const h = activeHolder();
+    res.json({ inUse: !!h, idleMinutes: config.session?.idleMinutes ?? 30, ...(h ? { freeInMinutes: holdBusyMinutes() } : {}) });
   });
 
   router.get("/auth/login", (_req, res) => {
@@ -670,24 +741,15 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
         res.status(403).json({ error: "not authorized", detail: `${user.login} is not on the access allowlist` });
         return;
       }
+      if (!claimHold(user.login)) {
+        res.clearCookie(STATE_COOKIE, { path: basePath });
+        signInResultPage(res, 423, false, busyMessage());
+        return;
+      }
       tokenStore.set(user.login, { token, name: user.name, email: user.email });
       setSession(res, user);
       res.clearCookie(STATE_COOKIE, { path: basePath });
-      // If opened in a popup the page notifies the opener and closes itself.
-      // If visited directly (non-popup) it falls back to a normal redirect.
-      res.type("html").send(
-        `<!doctype html><html><head><meta charset="utf-8"><title>Tweaklet — signed in</title></head><body>` +
-        `<script>` +
-        `if(window.opener){` +
-          `window.opener.postMessage({type:"tweaklet:signed-in"},window.location.origin);` +
-          `window.close();` +
-        `}else{` +
-          `window.location.replace(${JSON.stringify(basePath + "/")});` +
-        `}` +
-        `</script>` +
-        `<p>Signed in — you may close this window.</p>` +
-        `</body></html>`,
-      );
+      signInResultPage(res, 200, true);
     } catch (e) {
       res.status(502).json({ error: "oauth failed", detail: String(e) });
     }
@@ -695,7 +757,11 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
 
   router.post("/auth/logout", (req, res) => {
     const c = sessionClaims(req);
-    if (c) { revoke(c); tokenStore.delete(c.login); }
+    if (c) {
+      revoke(c);
+      tokenStore.delete(c.login);
+      if (holder && sameLogin(holder.login, c.login)) releaseHolder();
+    }
     res.clearCookie(SESSION_COOKIE, { path: basePath });
     res.clearCookie(SESSION_COOKIE, { path: "/" });
     res.status(204).end();
@@ -796,6 +862,7 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
     } finally {
       setActivePrompt(null);
       agentRunning = false;
+      if (holder) holder.lastSeen = now(); // a long agent turn counts as activity
       currentAbort = null;
       res.end();
     }

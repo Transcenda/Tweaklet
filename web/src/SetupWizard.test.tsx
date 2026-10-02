@@ -34,6 +34,7 @@ const { setupApiMock, apiMock, SetupAuthErrorMock, SETUP_TOKEN_KEY_VAL } = vi.ho
     exitPreview: vi.fn(),
     restore: vi.fn(),
     repos: vi.fn(),
+    authStatus: vi.fn(),
     clone: vi.fn(),
     history: vi.fn(),
     branches: vi.fn(),
@@ -93,6 +94,7 @@ beforeEach(() => {
   apiMock.doctor.mockResolvedValue({ checks: [] });
   // Default: repos resolves with cloned=true so Panel tests aren't blocked by the repo picker.
   apiMock.repos.mockResolvedValue({ allowlist: [], cloned: true });
+  apiMock.authStatus.mockResolvedValue({ inUse: false, idleMinutes: 30 });
   apiMock.clone.mockResolvedValue({ path: "/tmp/repo" });
   // Default: history resolves with empty events (no prior conversation).
   apiMock.history.mockResolvedValue({ events: [], sessionId: undefined });

@@ -176,7 +176,7 @@ describe("POST /tweaklet/agent/permission", () => {
     await request(appWith()).post("/tweaklet/agent/permission").send({ permissionID: "x", response: "approve" }).expect(401);
   });
 
-  it("404s (IDOR guard) when a different user tries to resolve another user's pending ask", async () => {
+  it("refuses a different user resolving another user's pending ask", async () => {
     // alice owns the ask; bob must NOT be able to resolve it.
     let askResult: "approve" | "deny" | null = null;
     const spy = async (a: any) => {
@@ -187,9 +187,10 @@ describe("POST /tweaklet/agent/permission", () => {
     // alice fires a prompt — the ask is registered with owner = "alice".
     const promptDone = request(app).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "hi" }).then((r) => r);
     await new Promise((r) => setTimeout(r, 50));
-    // bob attempts to resolve alice's ask → must get 404, not 202.
-    await request(app).post("/tweaklet/agent/permission").set("Cookie", bobCookie).send({ permissionID: "per_idor", response: "approve" }).expect(404);
-    // The ask must still be pending (askResult still null after bob's 404).
+    // bob attempts to resolve alice's ask → refused: alice holds the server, so
+    // bob isn't even signed in (and the per-ask owner check backs this up).
+    await request(app).post("/tweaklet/agent/permission").set("Cookie", bobCookie).send({ permissionID: "per_idor", response: "approve" }).expect(401);
+    // The ask must still be pending.
     expect(askResult).toBeNull();
     // alice resolves her own ask → 202.
     await request(app).post("/tweaklet/agent/permission").set("Cookie", authCookie).send({ permissionID: "per_idor", response: "approve" }).expect(202);
