@@ -46,7 +46,7 @@
     "dev": "tsx src/index.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "@opencode-ai/sdk": "^1.18.34",
     "express": "^4.19.2",
     "express-rate-limit": "^8.7.0",
