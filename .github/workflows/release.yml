@@ -20,7 +20,7 @@ jobs:
     name: Build, pack, and publish a GitHub Release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
