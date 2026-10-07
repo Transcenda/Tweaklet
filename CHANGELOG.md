@@ -4,6 +4,12 @@ Notable changes to Tweaklet. Each version ships as a prebuilt GitHub Release
 tarball (`tweaklet-server.tgz`); install/upgrade with
 `npm i -g https://github.com/Transcenda/Tweaklet/releases/latest/download/tweaklet-server.tgz`.
 
+## Unreleased
+
+- The start-up log states who can actually sign in: GitHub users with write
+  access to the configured repository. It no longer shows the outdated warning
+  that any GitHub user could.
+
 ## v0.0.5 — Change workspace (2026-10-01)
 
 - **Every change runs on a fresh branch.** A prompt sent from the live app now

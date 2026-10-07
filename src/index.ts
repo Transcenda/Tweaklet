@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { runInit, type InitOptions } from "./wizard/init.js";
-import { resolveConfig } from "./config/config.js";
+import { resolveConfig, accessSummary } from "./config/config.js";
 import { serve } from "./server/server.js";
 import { stopServer } from "./agent/opencode-server.js";
 import { runDiagnostics, type CheckStatus } from "./doctor/doctor.js";
@@ -47,9 +47,8 @@ async function main(): Promise<void> {
   }
   if (cmd === "serve") {
     const config = resolveConfig();
-    if (!config.access?.allowedLogins?.length && !config.access?.allowedUserIds?.length) {
-      console.warn("tweaklet WARNING: no access allowlist configured — any authenticated GitHub user can sign in. Set access.allowedLogins in your config.");
-    }
+    const access = accessSummary(config);
+    (access.level === "warn" ? console.warn : console.log)(`Tweaklet: ${access.message}`);
     serve(config);
     for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig as NodeJS.Signals, () => { stopServer().finally(() => process.exit(0)); });
     return;

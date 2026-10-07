@@ -238,3 +238,28 @@ export function resolveConfig(opts?: { cwd?: string }): TweakletConfig {
 
   return parsed;
 }
+
+/**
+ * One line for the server log saying who can sign in — mirrors the rules in
+ * src/server/server.ts (accessDenied): with GitHub sign-in, write access to the
+ * configured repository (optionally narrowed by access.allowedLogins); with
+ * none configured, nobody; without GitHub sign-in, only this machine's own
+ * `gh` user, from the machine itself.
+ */
+export function accessSummary(cfg: TweakletConfig): { level: "info" | "warn"; message: string } {
+  const narrowed = !!(cfg.access?.allowedLogins?.length || cfg.access?.allowedUserIds?.length);
+  if (!cfg.github?.clientId) {
+    return { level: "info", message: "Access: GitHub sign-in isn't configured, so only this machine's own `gh` user can sign in, from this machine." };
+  }
+  const repos = cfg.repo?.allowlist ?? [];
+  if (repos.length === 0) {
+    return narrowed
+      ? { level: "info", message: "Access: only the users listed in access.allowedLogins / allowedUserIds." }
+      : { level: "warn", message: "Access: no repository is configured (repo.allowlist), so nobody can sign in yet. Finish setup to add one." };
+  }
+  return {
+    level: "info",
+    message: `Access: GitHub users with write access to ${repos.join(", ")}${narrowed ? ", limited to access.allowedLogins / allowedUserIds" : ""}.`,
+  };
+}
+
