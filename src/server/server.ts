@@ -111,7 +111,7 @@ const SESSION_COOKIE = "apz_session";
 const STATE_COOKIE = "apz_oauth_state";
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const ASK_TIMEOUT_MS = 10 * 60 * 1000;
-const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const SIGN_IN_STATE_TTL_MS = 10 * 60 * 1000;
 
 /** What a session cookie carries. `typ` keeps other signed values (like the
  *  OAuth state cookie) from ever passing as a session; `sid` lets logout
@@ -784,8 +784,8 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       return;
     }
     const state = randomBytes(16).toString("hex");
-    res.cookie(STATE_COOKIE, sign({ typ: "oauth-state", state, exp: Date.now() + OAUTH_STATE_TTL_MS }, secret), {
-      httpOnly: true, secure: secureCookies, sameSite: "lax", path: basePath, maxAge: OAUTH_STATE_TTL_MS,
+    res.cookie(STATE_COOKIE, sign({ typ: "oauth-state", state, exp: Date.now() + SIGN_IN_STATE_TTL_MS }, secret), {
+      httpOnly: true, secure: secureCookies, sameSite: "lax", path: basePath, maxAge: SIGN_IN_STATE_TTL_MS,
     });
     res.redirect(
       buildAuthorizeUrl({
