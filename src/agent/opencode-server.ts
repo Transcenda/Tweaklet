@@ -196,7 +196,7 @@ export async function getServer(projectDir?: string): Promise<{ client: any; ser
   const target = projectDir && existsSync(projectDir) ? projectDir : (_ocDir ?? process.cwd());
   if (_oc && _ocDir === target) return _oc;
   if (_ocCreating && _ocCreating.dir === target) return _ocCreating.promise; // share the in-flight spawn
-  console.log(`[getServer] spawning opencode in ${target} (was: ${_ocDir ?? "none"})`);
+  console.log(_ocDir ? "[getServer] restarting opencode for a new working directory" : "[getServer] starting opencode");
   const promise = (async () => {
     if (_oc) await stopServer();            // project dir changed → restart opencode there
     const sdk = await import("@opencode-ai/sdk");

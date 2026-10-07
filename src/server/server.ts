@@ -463,9 +463,10 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
   }
 
   const secureCookies = config.server.publicUrl.startsWith("https://");
-  const cookieBase = { httpOnly: true, sameSite: "lax" as const, secure: secureCookies, path: basePath };
   function setSession(res: Response, user: GithubUser) {
-    res.cookie(SESSION_COOKIE, issueSessionToken(user, secret, now()), { ...cookieBase, maxAge: SESSION_TTL_MS });
+    res.cookie(SESSION_COOKIE, issueSessionToken(user, secret, now()), {
+      httpOnly: true, secure: secureCookies, sameSite: "lax", path: basePath, maxAge: SESSION_TTL_MS,
+    });
     res.clearCookie(SESSION_COOKIE, { path: "/" }); // legacy root-scoped cookie from older versions
   }
 
@@ -783,7 +784,9 @@ export function createServer(config: TweakletConfig, deps: ServerDeps = {}) {
       return;
     }
     const state = randomBytes(16).toString("hex");
-    res.cookie(STATE_COOKIE, sign({ typ: "oauth-state", state, exp: Date.now() + OAUTH_STATE_TTL_MS }, secret), { ...cookieBase, maxAge: OAUTH_STATE_TTL_MS });
+    res.cookie(STATE_COOKIE, sign({ typ: "oauth-state", state, exp: Date.now() + OAUTH_STATE_TTL_MS }, secret), {
+      httpOnly: true, secure: secureCookies, sameSite: "lax", path: basePath, maxAge: OAUTH_STATE_TTL_MS,
+    });
     res.redirect(
       buildAuthorizeUrl({
         clientId: config.github.clientId,

@@ -27,7 +27,9 @@ const guardrailGlob = z.string().min(1).refine((g) => {
   const e = g.trim().replace(/\\/g, "/");
   if (e.startsWith("/") || /^[A-Za-z]:/.test(e)) return false;
   if (e.split("/").includes("..")) return false;
-  if (/^(\*\*?\/?)+(\*(\.\*)?)?$/.test(e)) return false;
+  // A glob made only of `*`, `/` and `.` (`*`, `**`, `**/*`, `*.*`, …) matches
+  // everything. One character class, so the check is linear (no ReDoS).
+  if (/^[*/.]+$/.test(e)) return false;
   if (e === ".git" || e.startsWith(".git/")) return false;
   return true;
 }, "guardrails.allow entries must be repo-relative, without '..', not a catch-all like '**', and not inside .git/");
