@@ -10,8 +10,7 @@ import {
   resolveConfig,
   hasOperationalEssentials,
   ConfigSchema,
-  type TweakletConfig,
-} from "./config.js";
+  type TweakletConfig, accessSummary } from "./config.js";
 
 let home: string;
 beforeEach(() => {
@@ -299,3 +298,26 @@ describe("resolveConfig", () => {
     }
   });
 });
+
+describe("accessSummary", () => {
+  const base = {
+    server: { port: 4319, publicUrl: "http://localhost:4319", sessionSecret: "z".repeat(32), basePath: "/tweaklet" },
+    guardrails: { allow: ["src/**"] },
+    setup: { completed: true },
+  } as any;
+  const github = { clientId: "cid", clientSecret: "sec", oauthBaseUrl: "https://github.com", apiBaseUrl: "https://api.github.com" };
+  const repo = { path: "", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: ["acme/webapp"] };
+  it("names the repository whose writers can sign in", () => {
+    expect(accessSummary({ ...base, github, repo })).toEqual({ level: "info", message: "Access: GitHub users with write access to acme/webapp." });
+  });
+  it("mentions an explicit list that narrows it", () => {
+    expect(accessSummary({ ...base, github, repo, access: { allowedLogins: ["octocat"] } }).message).toMatch(/limited to access.allowedLogins/);
+  });
+  it("warns that nobody can sign in when no repository is configured", () => {
+    expect(accessSummary({ ...base, github, repo: { ...repo, allowlist: [] } }).level).toBe("warn");
+  });
+  it("describes local-only sign-in without GitHub OAuth", () => {
+    expect(accessSummary(base).message).toMatch(/only this machine's own `gh` user/);
+  });
+});
+
