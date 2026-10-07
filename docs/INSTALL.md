@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Node.js LTS (≥ 20)** — the only hard requirement to get the server running.
+- **Node.js, current LTS (≥ 24)** — the only hard requirement to get the server running. Older Node lines aren't supported (the doctor flags them).
 - `git` and `opencode` are needed for the full agent workflow; the in-browser Setup Wizard will guide you through installing and verifying each one after the server is up.
 - **No `gh` CLI required** — git operations (clone, commit, PR) are performed using each end-user's own GitHub OAuth token, not a shared operator credential.
 
@@ -28,14 +28,15 @@ npm install && npm run build:all            # server + web panel
 node dist/index.js serve                    # default port 4319
 ```
 
-On first start while unconfigured the server prints a **setup token** to the log:
+On first start while unconfigured, the server writes a one-time **setup token**
+to `~/.tweaklet/setup-token` (readable only by you; it's kept out of the log)
+and prints where it is:
 
-```
-Tweaklet setup token: <token>
-  (enter it in the setup wizard to configure this server)
+```bash
+cat ~/.tweaklet/setup-token
 ```
 
-Keep this token — you will need it in the next step. You can change the port with `--port <n>` (see `node dist/index.js serve --help`) or set `server.port` in `~/.tweaklet/config.json`.
+You'll need it in the next step. You can change the port with `--port <n>` (see `node dist/index.js serve --help`) or set `server.port` in `~/.tweaklet/config.json`.
 
 ---
 
@@ -57,9 +58,20 @@ The prefix must reach the app intact (do **not** strip it). The app is mounted u
 
 ```nginx
 location /tweaklet/ {
-    proxy_pass http://localhost:4319;
+    proxy_pass http://127.0.0.1:4319;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
 }
 ```
+
+Keep the forwarding headers. Tweaklet uses them to tell proxied requests apart
+from requests made on the machine itself; Caddy sends them by default.
+
+Tweaklet listens on `127.0.0.1` by default, so the reverse proxy on the same
+machine is the only way in. To expose it on another interface (for example,
+with the proxy on a different host), set `server.host` in
+`~/.tweaklet/config.json`, such as `"0.0.0.0"`.
 
 ---
 
@@ -134,6 +146,52 @@ Once the operator has completed the wizard, end-users interact entirely through 
 4. **Ship** — submit opens a Pull Request on GitHub authored as that user, with commits carrying their identity.
 
 ---
+
+## Live preview (optional)
+
+To show the agent's edits live, serve the host app's frontend from Tweaklet's
+clone with its dev server (e.g. `vite dev`), then tell Tweaklet how to keep it
+in step. Without a `preview` block, Tweaklet leaves your dev server alone.
+
+```json
+"preview": { "serviceName": "webapp-dev", "subdir": "frontend", "installCheckDir": "frontend/node_modules" }
+```
+
+- **A systemd unit** (`webapp-dev`) runs the dev server in `<repo.path>/<subdir>`.
+  Tweaklet starts it at boot (`systemctl enable`) and restarts it when it isn't
+  running, or after reinstalling dependencies because the lockfile changed.
+- **A narrow sudoers rule** lets the Tweaklet user restart exactly that unit:
+  ```
+  tweaklet ALL=(root) NOPASSWD: /usr/bin/systemctl restart webapp-dev
+  ```
+- **The reverse proxy** sends `/` to the dev server, ideally with a fallback to
+  your static build when it's down (Caddy:
+  `reverse_proxy localhost:5173 localhost:8080 { lb_policy first }`). It keeps
+  `/tweaklet/*` and your API routes pointed at their own backends.
+- **Behind a public hostname, Vite must allow that host and use secure HMR.**
+  Otherwise it answers `403 Blocked request` and live reload never connects. In
+  the host app's `vite.config.ts`:
+  ```ts
+  server: { allowedHosts: ["app.example.com"], hmr: { protocol: "wss", host: "app.example.com", clientPort: 443 } }
+  ```
+
+The doctor's **live preview** check reports a stopped unit.
+
+## Agent approvals
+
+By default, a server with GitHub sign-in runs the agent in **auto** mode.
+Tweaklet itself allows reads, edits inside the guardrail paths, and a short
+list of safe commands, and denies everything else with a note in the panel.
+Without GitHub sign-in (a developer's own machine), the default is **ask**:
+risky actions get an Allow/Deny prompt. Override in `~/.tweaklet/config.json`:
+
+```json
+"agent": { "approvals": "auto", "safeCommands": ["git status", "git diff", "npm run typecheck", "npm run lint"] }
+```
+
+Safe commands must match exactly, and any shell operator (`;`, `&&`, `|`, `>`,
+`$(…)`) disqualifies a command. Don't add commands that run code the agent can
+edit, such as test runners.
 
 ## Changing the base path
 

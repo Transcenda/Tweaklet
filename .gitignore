@@ -23,6 +23,8 @@ npm-debug.log*
 .vscode/
 *.swp
 
+.claude/settings.local.json
+
 # Tooling
 .playwright-mcp/
 coverage/

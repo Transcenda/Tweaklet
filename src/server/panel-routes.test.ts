@@ -17,7 +17,7 @@ const config: TweakletConfig = {
 function appWith(overrides = {}) {
   return createServer(config, {
     exchangeCodeForToken: async () => "gho_tok",
-    fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
+    checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
     sessionStore: noopStore(),
     ...overrides,
   });

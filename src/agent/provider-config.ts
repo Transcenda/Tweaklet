@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { mcpToken } from "./mcp-secret.js";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 
@@ -70,6 +71,8 @@ export function buildOpencodeProviderConfig(
         type: "remote",
         url: `http://127.0.0.1:${port}${basePath}/mcp`,
         enabled: true,
+        // The endpoint only answers requests carrying this process's token.
+        headers: { Authorization: `Bearer ${mcpToken()}` },
       },
     },
   };
@@ -89,6 +92,8 @@ export function ensureOpencodeProvider(
   if (!cfg) return false;
   const p = (deps.configPath ?? opencodeConfigPath)();
   (deps.mkdir ?? mkdirSync)(dirname(p), { recursive: true });
-  (deps.write ?? writeFileSync)(p, JSON.stringify(cfg, null, 2));
+  // 0600: the file carries the MCP endpoint's bearer token.
+  (deps.write ?? writeFileSync)(p, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+  try { chmodSync(p, 0o600); } catch { /* best effort (e.g. injected writer in tests) */ }
   return true;
 }

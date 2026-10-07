@@ -34,8 +34,12 @@ const { setupApiMock, apiMock, SetupAuthErrorMock, SETUP_TOKEN_KEY_VAL } = vi.ho
     exitPreview: vi.fn(),
     restore: vi.fn(),
     repos: vi.fn(),
+    authStatus: vi.fn(),
     clone: vi.fn(),
     history: vi.fn(),
+    branches: vi.fn(),
+    switchBranch: vi.fn(),
+    deleteBranch: vi.fn(),
   };
   const SETUP_TOKEN_KEY_VAL = "tweaklet.setupToken";
   return { setupApiMock, apiMock, SetupAuthErrorMock, SETUP_TOKEN_KEY_VAL };
@@ -90,9 +94,13 @@ beforeEach(() => {
   apiMock.doctor.mockResolvedValue({ checks: [] });
   // Default: repos resolves with cloned=true so Panel tests aren't blocked by the repo picker.
   apiMock.repos.mockResolvedValue({ allowlist: [], cloned: true });
+  apiMock.authStatus.mockResolvedValue({ inUse: false, idleMinutes: 30 });
   apiMock.clone.mockResolvedValue({ path: "/tmp/repo" });
   // Default: history resolves with empty events (no prior conversation).
   apiMock.history.mockResolvedValue({ events: [], sessionId: undefined });
+  apiMock.branches.mockResolvedValue({ base: "main", current: "main", branches: [] });
+  apiMock.switchBranch.mockResolvedValue({ branch: "main" });
+  apiMock.deleteBranch.mockResolvedValue(undefined);
   // Default: signIn resolves to signed-in
   authMock.signIn.mockResolvedValue("signed-in");
   // Default verify results for FinishStep
@@ -110,7 +118,7 @@ describe("App routing", () => {
 
   it("403 from setupApi.state shows the token prompt", async () => {
     setupApiMock.state.mockRejectedValue(new SetupAuthErrorMock());
-    render(<App />);
+    render(<App standalone />);
     expect(await screen.findByText(/enter setup token/i)).toBeInTheDocument();
     expect(screen.getByText(/setup token was printed in the tweaklet server log/i)).toBeInTheDocument();
   });
@@ -121,7 +129,7 @@ describe("App routing", () => {
       .mockRejectedValueOnce(new SetupAuthErrorMock())
       .mockResolvedValueOnce(makeState());
 
-    render(<App />);
+    render(<App standalone />);
     // Wait for token prompt
     const heading = await screen.findByText(/enter setup token/i);
     expect(heading).toBeInTheDocument();
@@ -151,7 +159,7 @@ describe("App routing", () => {
         ],
       })
     );
-    render(<App />);
+    render(<App standalone />);
     // Step labels visible
     expect(await screen.findByText(/system dependencies/i)).toBeInTheDocument();
     expect(await screen.findByText(/github oauth/i)).toBeInTheDocument();
@@ -163,7 +171,7 @@ describe("App routing", () => {
     setupApiMock.state.mockResolvedValue(
       makeState({ completed: true, firstIncompleteStepId: null })
     );
-    render(<App />);
+    render(<App standalone />);
     // Panel renders sign-in link when unauthenticated; but our default mock has alice logged in
     // Just verify the wizard heading is NOT present — Panel has rendered instead
     await waitFor(() => {
@@ -175,7 +183,7 @@ describe("App routing", () => {
 
   it("non-SetupAuthError (simulating 410) renders Panel", async () => {
     setupApiMock.state.mockRejectedValue(new Error("some other error"));
-    render(<App />);
+    render(<App standalone />);
     // Should render Panel (not token prompt, not wizard)
     await waitFor(() => {
       expect(screen.queryByText(/enter setup token/i)).toBeNull();
@@ -212,7 +220,7 @@ describe("App routing", () => {
     };
     setupApiMock.github.mockResolvedValue(afterGithub);
 
-    render(<App />);
+    render(<App standalone />);
     // Wait for wizard to render — the GitHub step label is in a span
     await screen.findByText("GitHub OAuth");
 
@@ -260,20 +268,20 @@ describe("RepoStep allowlist editor", () => {
           { id: "agent", label: "AI agent", status: "done" },
           { id: "repo", label: "Repository", status: "done" },
         ],
-        allowlist: ["transcenda/t8a"],
+        allowlist: ["acme/webapp"],
       })
     );
 
-    render(<App />);
+    render(<App standalone />);
 
     const textarea = await screen.findByLabelText(/allowed repositories/i);
     expect(textarea).toBeInTheDocument();
 
-    fireEvent.change(textarea, { target: { value: "transcenda/t8a" } });
+    fireEvent.change(textarea, { target: { value: "acme/webapp" } });
     fireEvent.click(screen.getByRole("button", { name: /save repositories/i }));
 
     await waitFor(() =>
-      expect(setupApiMock.repo).toHaveBeenCalledWith({ allowlist: ["transcenda/t8a"] })
+      expect(setupApiMock.repo).toHaveBeenCalledWith({ allowlist: ["acme/webapp"] })
     );
   });
 });
@@ -296,7 +304,7 @@ describe("FinishStep popup sign-in", () => {
     setupApiMock.state.mockResolvedValue(makeAllDoneState());
     apiMock.me.mockResolvedValue(null);
 
-    render(<App />);
+    render(<App standalone />);
     expect(await screen.findByRole("button", { name: /sign in with github/i })).toBeInTheDocument();
   });
 
@@ -308,7 +316,7 @@ describe("FinishStep popup sign-in", () => {
       .mockResolvedValue({ login: "alice", id: 7 });
     authMock.signIn.mockResolvedValue("signed-in");
 
-    render(<App />);
+    render(<App standalone />);
     const btn = await screen.findByRole("button", { name: /sign in with github/i });
     fireEvent.click(btn);
 
@@ -323,7 +331,7 @@ describe("FinishStep popup sign-in", () => {
     apiMock.me.mockResolvedValue(null);
     authMock.signIn.mockResolvedValue("closed");
 
-    render(<App />);
+    render(<App standalone />);
     const btn = await screen.findByRole("button", { name: /sign in with github/i });
     fireEvent.click(btn);
 
@@ -346,7 +354,7 @@ describe("FinishStep popup sign-in", () => {
       ready: false, signedIn: true, opencodeOk: true, repoCloned: false, detail: "no repo cloned yet",
     });
 
-    render(<App />);
+    render(<App standalone />);
 
     // Wait for the finish step to render with sign-in confirmation
     await screen.findByText(/signed in as/i);
@@ -366,7 +374,7 @@ describe("FinishStep popup sign-in", () => {
     apiMock.me.mockResolvedValue({ login: "alice", id: 7 });
     // defaults from beforeEach: verifyEmbed embedded:true, verifyAgent ready:true
 
-    render(<App />);
+    render(<App standalone />);
 
     await screen.findByText(/signed in as/i);
 

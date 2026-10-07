@@ -4,6 +4,94 @@ Notable changes to Tweaklet. Each version ships as a prebuilt GitHub Release
 tarball (`tweaklet-server.tgz`); install/upgrade with
 `npm i -g https://github.com/Transcenda/Tweaklet/releases/latest/download/tweaklet-server.tgz`.
 
+## v0.0.5 — Change workspace (2026-10-01)
+
+- **Every change runs on a fresh branch.** A prompt sent from the live app now
+  starts a new change automatically: Tweaklet fetches `origin/<base>`,
+  hard-resets the local base to it, discards stray edits there, and cuts a
+  uniquely named branch. Same-named ideas no longer overwrite each other. Any
+  commits that exist only on the local base are first moved to a "Recovered
+  work" change, so the reset can't destroy committed work.
+- **Change switcher.** The panel's top bar lists every change in progress, with
+  its saves, last update, an unsaved marker, and who started it. You can switch
+  in one click; each change keeps its own agent conversation. You can delete
+  your own changes and go back to the live app. Switching auto-saves unsaved
+  edits, bypassing repo hooks, and refuses rather than ever discarding work.
+- **Live preview self-heals.** It reinstalls deps when the lockfile changes,
+  restarts the dev server only when it's stopped, runs at `serve` start (so it
+  recovers after a reboot), and gets a doctor check of its own.
+- **Safety.** A single lock covers every working-tree operation. Prompts are
+  refused while previewing an earlier save. Saves never land on the base. Only
+  the owner can delete a change. `/agent/history` is bounded, so a stuck agent
+  can't hang the panel.
+- **Reconnect nudge** when the server has lost the GitHub token (e.g. after a
+  restart). Without the token it can't fetch the latest base or submit.
+- The ↩ recovery button now undoes unsaved edits instead of deleting the change.
+- **One active user at a time.** Signing in holds the server under that
+  person's GitHub identity. Others are told it's in use, and when it frees up,
+  until the holder signs out or is idle for `session.idleMinutes` (default 30).
+  On release the holder's token is erased.
+- **Security hardening.**
+  - Local-only routes stay local behind a reverse proxy: the DOM-inspect MCP
+    endpoint needs a per-process token, and `gh` CLI sign-in needs a direct
+    local request and is off when OAuth is configured.
+  - The server binds to `127.0.0.1` by default (`server.host` overrides it).
+  - Sessions expire, are revocable and purpose-tagged, and the cookie is
+    `Secure` and scoped to the base path.
+  - API and sign-in routes are rate-limited.
+  - Dependencies audit clean.
+- **Auto approvals on shared servers.**
+  - Tweaklet now launches opencode so it asks before every tool use. A host
+    repo's own opencode config can't loosen this.
+  - On servers with GitHub sign-in, Tweaklet decides everything itself:
+    reads, edits inside the guardrails, and an exact-match safe-command list
+    (read-only git, typecheck, lint) are allowed; other commands and web
+    access are denied and explained in the panel.
+  - Ask mode (an Allow/Deny prompt for risky actions) remains the default for
+    a developer's own machine. Configure with `agent.approvals` and
+    `agent.safeCommands`.
+  - Sub-agents and access outside the repo are always denied.
+  - The panel mounts in a closed shadow root and keeps its own `fetch`.
+- **Access follows GitHub.**
+  - Anyone with write access to the configured repository can sign in,
+    checked with their own token and re-checked every 10 minutes while they
+    hold the server. Removing someone on GitHub removes them from Tweaklet.
+  - With no repository configured, nobody gets in.
+  - `access.allowedLogins` optionally narrows it further.
+- **PRs stay inside the guardrails.** Submitting a change that touches files
+  outside `guardrails.allow` (a CI workflow, say) is refused, and the panel
+  lists the files.
+- **Git and token hardening.**
+  - Authenticated git runs with repo hooks, fsmonitor and credential helpers
+    disabled, over HTTPS only. Pushes skip hooks, and the token never reaches
+    local merges.
+  - The askpass helper only answers the configured host.
+  - Commit IDs from requests must be saves on the current change.
+  - Reusing a clone verifies its origin, and credentials in remote URLs are
+    masked in errors.
+- **The page reader is redacted and visible.**
+  - Values, hidden and password inputs, scripts and token-like strings are
+    removed, and queries are scoped to the page body.
+  - Every read appears in the panel ("👁 The agent looked at …").
+  - Result ids are unguessable, and only the person running the agent can
+    answer, with a size cap.
+- **Safer defaults.**
+  - Guardrail globs that would defeat the guardrail (`**`, absolute paths,
+    `..`, `.git/`) are rejected at config load.
+  - Setup routes fail closed, and the setup token goes to
+    `~/.tweaklet/setup-token` (0600) instead of the log.
+  - Unanswered permission prompts are denied after 10 minutes, and closing
+    the tab stops the agent.
+  - Cross-site POSTs are refused.
+  - opencode's own API needs a per-process password and listens on loopback
+    only.
+  - The widget accepts only its own same-origin script URL.
+  - Embedded pages never show the setup-token prompt.
+  - Picked-element context no longer includes the URL's query string.
+- **Requires the current Node LTS (24+).** Only the current LTS line is supported now (`engines: >=24`). Node 20 reached end-of-life in April 2026. The doctor reports older Node as a failure with an upgrade hint, so upgrade the host's Node before installing this release.
+- `@opencode-ai/sdk` 1.18.34. Install `opencode-ai@1.18.34` on the host to match.
+- Design: [`docs/specs/2026-10-01-branch-workspace-design.md`](docs/specs/2026-10-01-branch-workspace-design.md).
+
 ## v0.0.4 — Branch-sync (2026-06-21)
 
 - **The working tree stays current with `main`.** Each change now branches off a
@@ -44,9 +132,9 @@ tarball (`tweaklet-server.tgz`); install/upgrade with
 
 ## v0.0.1 — Initial open-source release (2026-06-20)
 
-- First public release as a standalone repo (previously developed inside the t8a
-  monorepo). Includes the self-mounting Shadow-DOM widget, the opencode-on-Vertex
-  agent, per-user GitHub OAuth, the change lifecycle (start → save points → submit
-  PR), the in-app live preview + DOM-inspect MCP + crash-safe recovery (the "closed
+- First public release as a standalone repo (previously developed privately).
+  Includes the self-mounting Shadow-DOM widget, the opencode-on-Vertex agent,
+  per-user GitHub OAuth, the change lifecycle (start → save points → submit PR),
+  the in-app live preview + DOM-inspect MCP + crash-safe recovery (the "closed
   loop"), and the in-browser setup wizard. Distributed as a prebuilt GitHub Release
   tarball — no npm registry account required.

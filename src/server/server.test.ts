@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import request from "supertest";
-import { createServer } from "./server.js";
+import { createServer, issueSessionToken } from "./server.js";
 import { sign } from "../auth/signing.js";
 import type { TweakletConfig } from "../config/config.js";
 import type { Check } from "../doctor/doctor.js";
@@ -12,6 +12,7 @@ function noopStore() { return makeSessionStore("/dev/null", { read: () => null, 
 const config: TweakletConfig = {
   github: { clientId: "cid", clientSecret: "sec", oauthBaseUrl: "https://github.com", apiBaseUrl: "https://api.github.com" },
   server: { port: 4319, publicUrl: "http://localhost:4319", sessionSecret: "z".repeat(32), basePath: "/tweaklet" },
+  repo: { path: "", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: ["acme/webapp"] },
   guardrails: { allow: ["frontend/src/**"] },
   setup: { completed: false },
 };
@@ -25,7 +26,7 @@ const configNoGithub: TweakletConfig = {
 function appWith(overrides = {}) {
   return createServer(config, {
     exchangeCodeForToken: async () => "gho_tok",
-    fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
+    checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
     sessionStore: noopStore(),
     ...overrides,
   });
@@ -40,11 +41,11 @@ describe("server", () => {
     const sampleCheck: Check[] = [{ name: "opencode", status: "ok", detail: "v1" }];
     const app = createServer(config, {
       exchangeCodeForToken: async () => "gho_tok",
-      fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
+      checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
       runDiagnostics: async () => sampleCheck,
       sessionStore: noopStore(),
     });
-    const cookie = `apz_session=${sign({ login: "alice", id: 7 }, config.server.sessionSecret)}`;
+    const cookie = `apz_session=${issueSessionToken({ login: "alice", id: 7 }, config.server.sessionSecret)}`;
     const res = await request(app).get("/tweaklet/agent/doctor").set("Cookie", cookie).expect(200);
     expect(res.body.checks[0].name).toBe("opencode");
     expect(res.body.checks[0].status).toBe("ok");
@@ -55,9 +56,9 @@ describe("server", () => {
   });
 
   it("returns the user on /tweaklet/agent/me with a valid session cookie", async () => {
-    const cookie = `apz_session=${sign({ login: "alice", id: 7 }, config.server.sessionSecret)}`;
+    const cookie = `apz_session=${issueSessionToken({ login: "alice", id: 7 }, config.server.sessionSecret)}`;
     const res = await request(appWith()).get("/tweaklet/agent/me").set("Cookie", cookie).expect(200);
-    expect(res.body).toEqual({ login: "alice", id: 7 });
+    expect(res.body).toMatchObject({ login: "alice", id: 7 });
   });
 
   it("/tweaklet/auth/login redirects to GitHub with a state cookie", async () => {
@@ -86,7 +87,7 @@ describe("server", () => {
   });
 
   it("/tweaklet/auth/cli mints a session and redirects to /tweaklet/ when gh CLI is authenticated", async () => {
-    const app = createServer(config, { ghCliUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }), sessionStore: noopStore() });
+    const app = createServer(configNoGithub, { ghCliUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }), sessionStore: noopStore() });
     const res = await request(app).get("/tweaklet/auth/cli").expect(302);
     expect(res.headers.location).toBe("/tweaklet/");
     expect((res.headers["set-cookie"] as unknown as string[]).join(";")).toContain("apz_session=");
@@ -107,15 +108,15 @@ describe("server", () => {
     };
     const app = createServer(allowlistConfig, {
       exchangeCodeForToken: async () => "gho_tok",
-      fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
+      checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
       sessionStore: noopStore(),
     });
     const agent = request.agent(app);
     const login = await agent.get("/tweaklet/auth/login").expect(302);
     const state = new URL(login.headers.location).searchParams.get("state")!;
     const res = await agent.get(`/tweaklet/auth/callback?code=abc&state=${state}`).expect(403);
-    expect(res.body.error).toBe("not authorized");
-    expect(res.body.detail).toContain("alice");
+    expect(res.text).toContain("@alice isn't on this server's access list.");
+    expect(res.text).toContain("tweaklet:sign-in-failed");
   });
 
   it("/tweaklet/auth/callback succeeds when the user IS on the allowlist", async () => {
@@ -125,7 +126,7 @@ describe("server", () => {
     };
     const app = createServer(allowlistConfig, {
       exchangeCodeForToken: async () => "gho_tok",
-      fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
+      checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
       sessionStore: noopStore(),
     });
     const agent = request.agent(app);
@@ -139,7 +140,7 @@ describe("server", () => {
 
   it("/tweaklet/auth/cli 403s when the gh CLI user is not on the allowlist", async () => {
     const allowlistConfig: TweakletConfig = {
-      ...config,
+      ...configNoGithub,
       access: { allowedLogins: ["bob"] },
     };
     const app = createServer(allowlistConfig, { ghCliUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }), sessionStore: noopStore() });
@@ -157,7 +158,7 @@ describe("basePath routing", () => {
     };
     const app = createServer(cfgWithBase, {
       exchangeCodeForToken: async () => "gho_tok",
-      fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
+      checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
       sessionStore: noopStore(),
     });
     await request(app).get("/tw/agent/state").expect(401); // mounted under /tw, auth-gated → 401 not 404
@@ -182,13 +183,16 @@ describe("basePath routing", () => {
     let capturedRedirectUri = "";
     const app = createServer(cfgWithBase, {
       exchangeCodeForToken: async (opts: any) => { capturedRedirectUri = opts.redirectUri; return "gho_tok"; },
-      fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
+      checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
       sessionStore: noopStore(),
     });
-    const agent = request.agent(app);
-    const login = await agent.get("/tw/auth/login").expect(302);
+    // https publicUrl → the state cookie is Secure, which a plain-http test
+    // agent won't replay; carry it explicitly.
+    const login = await request(app).get("/tw/auth/login").expect(302);
     const state = new URL(login.headers.location).searchParams.get("state")!;
-    await agent.get(`/tw/auth/callback?code=abc&state=${state}`).expect(200);
+    const stateCookie = ([] as string[]).concat(login.headers["set-cookie"] as any).find((c) => c.startsWith("apz_oauth_state="))!;
+    expect(stateCookie).toMatch(/Secure/);
+    await request(app).get(`/tw/auth/callback?code=abc&state=${state}`).set("Cookie", stateCookie.split(";")[0]).expect(200);
     expect(capturedRedirectUri).toBe("https://example.com/tw/auth/callback");
   });
 });

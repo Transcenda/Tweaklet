@@ -1,7 +1,8 @@
 # tweaklet — v1 Design
 
-> Status: **approved — proceeding to implementation plan** · revised 2026-06-12 · standalone product
-> incubation (not a T8A module).
+> **Status:** Partly superseded — the product framing, personas, self-hosted/BYO-model stance, per-company GitHub OAuth, setup wizard and draft-PR lifecycle still hold, but the agent is now the opencode server driven through `@opencode-ai/sdk` with per-request permission guardrails, and changes run on per-change branches with a live preview; see docs/ARCHITECTURE.md § Agent guardrails and § Change workspace.
+
+> Revised 2026-06-12.
 > Companion research: [`2026-06-11-universal-ai-sandbox-landscape.md`](./2026-06-11-universal-ai-sandbox-landscape.md).
 > Name: **tweaklet** (working name).
 >
@@ -39,7 +40,7 @@ prompting} + {PR-to-merge}` combination is unoccupied — and *nobody* offers it
 **The company's Dev Server becomes a developer's machine, operated by an AI agent, prompted by
 non-technical people.** The Dev Server already runs the full app (backend + DB + services) with
 realistic data — so tweaklet inherits the running full-stack environment for free. The "developer"
-driving it is the agent (Gemini CLI); the agent is driven by non-technical prompts.
+driving it is the agent (Gemini CLI — *superseded by opencode, see §6.2*); the agent is driven by non-technical prompts.
 
 Corollary: the agent's capability ceiling is a developer's. v1 steers non-technical users toward
 **frontend / user-facing features** as a **guardrail/UX choice, not a limit** — widening scope
@@ -95,7 +96,7 @@ one-time wizard that configures the critical options:
 3. **Authorize** — "Sign in with GitHub" → OAuth token with `repo` scope.
 4. **Clone** — clone the repo **under the agent user's home directory**.
 5. **Branch model** — base branch (`main`/`develop`) + branch-naming convention matching the
-   company's existing standard (e.g. T8A's `<type>/<linear-id>-<slug>`) + PR target.
+   company's existing standard (e.g. `<type>/<ticket-id>-<slug>`) + PR target.
 6. **Run & live-update** — the run/build command (e.g. `make dev`, `npm run dev`, a binary build) +
    **how the running app picks up a change**: native hot-reload if the app has it, otherwise
    **rebuild-and-swap** (rebuild the bundle/binary, then symlink or copy it over the running app).
@@ -136,6 +137,9 @@ prompt drove an autonomous file edit end-to-end:
 - Config `~/.config/opencode/opencode.json`: provider `google-vertex-ai` with
   **`"npm": "@ai-sdk/google-vertex"`** + `options:{project, location:"global"}` + a models entry
   (opencode auto-installs the native Vertex SDK and authenticates via ADC).
+- *(Superseded: Tweaklet now runs a loopback opencode server and drives it through
+  `@opencode-ai/sdk`, answering each tool-permission request instead of skipping permissions —
+  see docs/ARCHITECTURE.md § Agent guardrails.)*
 - Invocation: `opencode run --dir <repo> --format json --dangerously-skip-permissions -m
   google-vertex-ai/<model> -- "<prompt>"`, env `GOOGLE_CLOUD_PROJECT` + `VERTEX_LOCATION=global`.
   **`--dir` is essential** — without it opencode roams to an ancestor repo and edits the wrong files
@@ -204,12 +208,14 @@ provides. v1 checks *authorization*, nothing else.
 1. **Runs on the existing Dev Server** — no VM, no provisioning.
 2. **No Docker/Compose** — run the app the way the company already does, via a configured command.
 3. **Reuse the Dev Server's data** — no seed generation; **Dev API backdoor → Phase 2.**
-4. **Drive an OSS agent harness (Gemini CLI), don't build one** — Vertex-auth, headless-streamable;
+4. **Drive an OSS agent harness (Gemini CLI — *now opencode, §6.2*), don't build one** — Vertex-auth, headless-streamable;
    pluggable backend.
 5. **No transport/TLS/infra** — app-level GitHub auth only; the Dev Server fronts everything.
 6. **Single right panel** — JS snippet (SPA) or standalone tab (MPA); panel drives Gemini CLI's stream.
 7. **No per-user isolation** — one shared working copy, one session at a time. **Multiple users →
-   one Dev Server per user** (Phase 2), not multi-tenant on one box.
+   one Dev Server per user** (Phase 2), not multi-tenant on one box. *(Partly superseded: still one
+   shared clone per host, but each change now has its own branch and per-user agent conversation —
+   see docs/ARCHITECTURE.md § Change workspace.)*
 8. **Config is one local file in the agent user's home dir** — no database, no control plane.
 9. **PR refinement *and* post-PR review flows are native** — `gh` + the agent carry the feature to merge.
 
@@ -228,13 +234,13 @@ provides. v1 checks *authorization*, nothing else.
 | Concurrency | one session at a time | many users (one Dev Server each) |
 
 ## 9. End-to-end journey (v1)
-1. **Dev installs** tweaklet on the existing T8A **Dev Server** and runs the wizard: picks the agent
-   OS user, registers a GitHub OAuth App on the Transcenda GitHub, clones under the user's home dir,
+1. **Dev installs** tweaklet on the host app's existing **Dev Server** and runs the wizard: picks the
+   agent OS user, registers a GitHub OAuth App on the company's GitHub org, clones under the user's home dir,
    sets the branch model, sets `make dev` + the live-update strategy, points the agent at Vertex and
    **tests the connection**, authors/verifies `AGENTS.md` + guardrails + skills, chooses the **SPA JS
    snippet**, and **runs one real change** to confirm the loop.
-2. **A PM** signs in with GitHub, lands in tweaklet: T8A running, slim panel on the right.
-3. PM: *"Make the prompt-editing box on the recruitment settings page bigger."* Gemini CLI explores,
+2. **A PM** signs in with GitHub, lands in tweaklet: the host app running, slim panel on the right.
+3. PM: *"Make the prompt textarea on the settings page bigger."* The agent explores,
    edits, the app updates live; the PM watches progress stream in the panel.
 4. PM iterates, saves a checkpoint, clicks **Ready to go prod**.
 5. tweaklet branches/commits/pushes as the PM and opens a **draft PR**. A reviewer comments; the PM
@@ -258,6 +264,7 @@ or standalone tab (MPA) · one local config file in the agent user's home dir ·
 company-chosen skills/best-practices framework.
 
 ## 12. Open decisions
-- **Repo home:** incubating on `spike/ai-sandbox` in the T8A repo; separate repo when it graduates.
-- **First demo feature (chosen):** enlarge the prompt-editing textarea on the recruitment settings
-  page — a deliberately tiny, low-risk frontend change to prove the loop end-to-end.
+- **Repo home:** incubating on a spike branch inside the first host app's repo; separate repo when
+  it graduates. *(Resolved: Tweaklet now lives in its own repo, github.com/Transcenda/Tweaklet.)*
+- **First demo feature (chosen):** enlarge the prompt textarea on a settings page of the host app —
+  a deliberately tiny, low-risk frontend change to prove the loop end-to-end.

@@ -1,4 +1,5 @@
 import type { TweakletConfig } from "../config/config.js";
+import { redactUrlCredentials } from "../git/validate.js";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import * as http from "node:http";
@@ -40,12 +41,17 @@ export interface DoctorDeps {
   /** Whether the GCE metadata server can mint a token (i.e. ADC via the VM's
    *  service account). Injected for tests; default probes the real endpoint. */
   gceMetadataAdc?: () => Promise<boolean>;
+  /** Node version to judge (defaults to the running `process.version`). Injected for tests. */
+  nodeVersion?: string;
 }
+
+/** Tweaklet supports only the current Node LTS line; keep in step with package.json "engines". */
+export const MIN_NODE_MAJOR = 24;
 
 /**
  * Default GCE metadata-server ADC probe: ask the metadata server for the
  * default service account token. Returns true only on a GCE VM whose SA can
- * mint tokens (key-less ADC — how opencode reaches Vertex on the dev server).
+ * mint tokens (key-less ADC — e.g. opencode reaching Vertex from a GCE VM).
  * Fails fast (1s) off-GCE.
  */
 const defaultGceMetadataAdc = async (): Promise<boolean> =>
@@ -243,7 +249,7 @@ export async function runDiagnostics(config: TweakletConfig, deps: DoctorDeps = 
     try {
       const { code, stdout } = await exec("git", ["-C", config.repo.path, "remote", "get-url", "origin"]);
       if (code === 0) {
-        checks.push({ name: "git remote", status: "ok", detail: stdout.trim(), category: "repo" });
+        checks.push({ name: "git remote", status: "ok", detail: redactUrlCredentials(stdout.trim()), category: "repo" });
       } else {
         checks.push({
           name: "git remote",
@@ -280,19 +286,40 @@ export async function runDiagnostics(config: TweakletConfig, deps: DoctorDeps = 
     });
   }
 
+  // 8b. live preview dev server (SYSTEM) — only when a preview is configured.
+  //     A stopped unit is invisible otherwise: the reverse proxy silently fails
+  //     over to the static build, so edits never show and HMR is dead.
+  if (config.preview) {
+    const name = config.preview.serviceName;
+    const { code } = await exec("systemctl", ["is-active", "--quiet", name]);
+    if (code === 0) {
+      checks.push({ name: "live preview", status: "ok", detail: `${name} running`, category: "system" });
+    } else {
+      checks.push({
+        name: "live preview",
+        status: "fail",
+        detail: `${name} is not running — edits won't show live`,
+        fix: "Restart Tweaklet (it heals the preview on start) or start the unit.",
+        commands: [`sudo systemctl enable --now ${name}`],
+        category: "system",
+      });
+    }
+  }
+
   // 9. node version (SYSTEM)
   {
-    const match = process.version.match(/^v(\d+)\.(\d+)/);
+    const version = deps.nodeVersion ?? process.version;
+    const match = version.match(/^v(\d+)\.(\d+)/);
     const major = match ? parseInt(match[1], 10) : 0;
     const minor = match ? parseInt(match[2], 10) : 0;
-    if (major >= 20) {
+    if (major >= MIN_NODE_MAJOR) {
       checks.push({ name: "node version", status: "ok", detail: `Node v${major}.${minor}.x ✓`, category: "system" });
     } else {
       checks.push({
         name: "node version",
         status: "fail",
-        detail: `Node v20+ required, found ${process.version}`,
-        fix: "Install Node 20+ from https://nodejs.org or via nvm",
+        detail: `Node v${MIN_NODE_MAJOR}+ required, found ${version}`,
+        fix: `Install the current Node LTS (v${MIN_NODE_MAJOR}+) from https://nodejs.org or via nvm, then restart Tweaklet.`,
         category: "system",
       });
     }

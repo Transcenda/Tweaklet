@@ -1,7 +1,9 @@
 # Tweaklet — Single-Active-Session "Booking" Model + Session Hardening (design)
 
-**Status:** approved direction (2026-06-19) · **implementation deferred** (this is the planned "Phase 2" session work; see the companion plan in `docs/plans/`).
-**Builds on:** the per-user OAuth model (`2026-06-18-per-user-github-oauth-design.md`, shipped on PR #85). That made git run under each user's OAuth token; this bounds the *session lifecycle* and enforces *one active user at a time*.
+> **Status:** Partly implemented — the core booking model shipped in v0.0.5 in a simplified form: whoever signs in holds the server; others are refused at sign-in until the holder signs out or goes idle (`session.idleMinutes`, default 30; a running agent counts as activity); on release the holder's GitHub token is erased and their session stops counting. Not built: the request/hand-over takeover handshake and the GitHub App migration. See docs/ARCHITECTURE.md § Identity and access.
+
+**Date:** 2026-06-19 (approved direction; this was the planned "Phase 2" session work).
+**Builds on:** the per-user OAuth model (`2026-06-18-per-user-github-oauth-design.md`, already implemented). That made git run under each user's OAuth token; this bounds the *session lifecycle* and enforces *one active user at a time*.
 
 ## Why
 
@@ -101,7 +103,7 @@ Holder-notification: reuse the existing SSE stream (`/agent/prompt` events) + a 
 
 - Unit/integration: acquire when free; 409 for non-holder; request→deny keeps holder; request→release hands over + purges token; idle auto-release after `IDLE_LIMIT`; `lastActivityAt` bumps on agent actions; allowlist enforced; open-allowlist doctor warning.
 - Web: in-use banner + request button; holder keep/hand-over prompt; idle state; setup copy/ordering.
-- Manual (nexus-dev): two browsers/accounts — A holds + tweaks; B sees "in use", requests; A hands over; B acquires; idle-timeout path; A's token purged on release.
+- Manual (a shared dev server): two browsers/accounts — A holds + tweaks; B sees "in use", requests; A hands over; B acquires; idle-timeout path; A's token purged on release.
 
 ## Open questions (decide before implementing)
 
@@ -112,12 +114,12 @@ Holder-notification: reuse the existing SSE stream (`/agent/prompt` events) + a 
 
 ## Related security follow-up: GitHub App migration (per-repo least privilege)
 
-**Decided 2026-06-19** to do *alongside* this session hardening (both are "tighten the auth"). Implement after, or together with, the booking model.
+**Decided 2026-06-19** to do *alongside* this session hardening (both are "tighten the auth"). Implement after, or together with, the booking model. *(Not implemented yet: Tweaklet still uses an OAuth App with the `repo` scope.)*
 
 **Problem:** the per-user OAuth model uses an **OAuth App with the `repo` scope** — all-or-nothing read/write to *every* repo the signing-in user can access (the consent screen lists all their orgs). The server-side allowlist limits what Tweaklet *does*, but the *grant* is broad — unacceptable for security-conscious orgs.
 
 **Fix:** migrate from an OAuth App to a **GitHub App**:
-- An admin **installs** the app on **selected repositories** only (e.g. just `Transcenda/t8a`), with **least-privilege** permissions: Contents (RW), Pull requests (RW), Metadata (R).
+- An admin **installs** the app on **selected repositories** only (e.g. just `acme/webapp`), with **least-privilege** permissions: Contents (RW), Pull requests (RW), Metadata (R).
 - Use **user-to-server** auth (the GitHub App also has a client id/secret + an OAuth-style authorize flow): the signed-in user authorizes, and the resulting token can only touch the **intersection of (repos the user can access) and (repos the app is installed on)** — so per-user attribution is **preserved** while access is scoped to the installed repo(s). The consent screen shows the app's permissions, not "all your repos."
 
 **Changes:**

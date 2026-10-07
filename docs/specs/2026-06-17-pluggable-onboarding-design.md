@@ -1,7 +1,9 @@
 # Tweaklet — Pluggable URI-Prefix Mount + Onboarding (Phase 1)
 
-**Status:** approved (design) · 2026-06-17
-**Goal:** Make Tweaklet a self-contained, host-agnostic product that mounts under a configurable URI prefix on any existing origin (no dedicated domain), installs on a Linux box via one SSH bootstrap, and is configured the rest of the way through a **web Setup Wizard** driven by doctor checks. Remove all t8a coupling.
+> **Status:** Partly superseded — the `basePath` mount, self-mounting Shadow-DOM `widget.js`, repo allowlist and resumable setup wizard still hold, but cloning and pushing use each user's GitHub OAuth token over plain git (no `gh` CLI); see docs/specs/2026-06-18-per-user-github-oauth-design.md and docs/ARCHITECTURE.md § Identity and access.
+
+*Design date: 2026-06-17.*
+**Goal:** Make Tweaklet a self-contained, host-agnostic product that mounts under a configurable URI prefix on any existing origin (no dedicated domain), installs on a Linux box via one SSH bootstrap, and is configured the rest of the way through a **web Setup Wizard** driven by doctor checks. Remove all coupling to the first host app it was built against.
 
 **Non-goals (Phase 2):** the multi-user booking model — session lock, idle timeout, per-user push attribution, branch registry. Phase 1 is single-developer (you log in and use it).
 
@@ -23,9 +25,10 @@
 - **Direct host-DOM picker/highlight.** Because the panel runs in the host page's JS context, the element picker queries `document` and highlights host elements directly — **all `postMessage` is removed** (it only existed to cross the iframe boundary).
 - **Sign-in via popup.** GitHub's OAuth page can't be embedded (X-Frame-Options) regardless of embed style, so the panel opens `<base>/auth/login` in a popup/tab; the callback closes it and the panel polls `<base>/agent/me`. Same-origin (the host proxies `<base>/*`), so the session cookie is the host-origin cookie.
 - **Bare `/tweaklet/`** serves a tiny bootstrap HTML page that just loads `widget.js` — lets a developer open `https://host/tweaklet/` to run first-time setup *before* the snippet is embedded in their app. (No more redirect-to-login; the `/panel/` HTML route is removed.)
-- Host wiring (documented): the host reverse-proxies `${basePath}/*` → the Tweaklet port. For nexus-dev that's a Caddy path-route to `:4319` — no new domain.
+- Host wiring (documented): the host reverse-proxies `${basePath}/*` → the Tweaklet port. For a typical dev server that's a Caddy path-route to `:4319` — no new domain.
 
 ## 2. Repo allowlist + gh clone
+*(Superseded in part: the clone now uses plain git with the signed-in user's OAuth token, not `gh repo clone`.)*
 - Config `repo.allowlist: string[]` — git URLs (or `owner/name`) the server may clone. `repo.path` (the working checkout) and `repo.sourceDir` (where clones live).
 - A setup endpoint clones a chosen allowlisted repo via `gh repo clone` into `sourceDir`, sets `repo.path`, checks out `baseBranch`. Refuses any repo not in the allowlist (validated server-side, not just UI).
 - The agent's `cwd` and Vite's working dir both point at `repo.path`; `run.liveUpdate=hot-reload` (already in config) means the agent's edits land in the checkout Vite serves with HMR → live preview.
@@ -45,8 +48,8 @@ When the server is **not fully configured**, the panel renders the **Setup Wizar
 - Backend: setup endpoints (`GET <base>/setup/state` returns the full doctor result + per-step status + `completed`, `POST <base>/setup/github`, `/setup/agent`, `/setup/repo`, re-run `<base>/setup/doctor`) — **unauthenticated only while unconfigured**, then locked once setup completes (so it can't be re-run by anyone). Reuse `doctor.ts`; extend with node-version + distro detection + publicUrl-reachable.
 - Frontend: a `SetupWizard` component (sibling of `Panel`) shown by the widget when `setup/state.completed === false`; it renders all steps with live status and lets you act on any incomplete one in any order.
 
-## 5. Decouple from t8a
-- Remove the t8a-specific bits: the `frontend/index.html` `VITE_TWEAKLET_URL` loader is no longer how it embeds (drop-in `<script>` now); guardrails default `["frontend/src/**"]` becomes a config value the wizard sets per-repo (no hard t8a path baked in); any t8a naming in prompts/docs already removed — verify none remains.
+## 5. Decouple from the first host app
+- Remove the host-specific bits: the host's `index.html` `VITE_TWEAKLET_URL` loader is no longer how it embeds (drop-in `<script>` now); guardrails default `["frontend/src/**"]` becomes a config value the wizard sets per-repo (no host-specific path baked in); any host-app naming in prompts/docs already removed — verify none remains.
 
 ## Config additions (summary)
 `server.basePath` (default `/tweaklet`); `repo.allowlist: string[]`, `repo.sourceDir`; a `setup.completed: boolean` marker. Everything else (github/agent.vertex*/run.liveUpdate/guardrails/access) already exists.
@@ -55,7 +58,7 @@ When the server is **not fully configured**, the panel renders the **Setup Wizar
 - Web (vitest/jsdom): `widget.js` base-from-script-src derivation; api client prefixes `__TWEAKLET_BASE__`; SetupWizard renders per `setup/state` + advances as checks go green; wizard hidden once configured.
 - Server (vitest): all routes mount under a non-default basePath; OAuth redirect uses `publicUrl+basePath`; repo-allowlist rejects a non-listed repo; setup endpoints lock after completion.
 - Doctor: the extended checks return the right status/fix.
-- Manual: install.sh on a clean Debian box (or the nexus-dev VM) → wizard → green → login → a prompt edits the checkout live.
+- Manual: install.sh on a clean Debian box (or a dev VM) → wizard → green → login → a prompt edits the checkout live.
 
 ## Rollout
-Build on a **feature branch → PR** (Tweaklet now uses PRs, not trunk-based, as of 2026-06-17). Run the Tweaklet gate (backend `npm run build && npm test` + web `npm run build && npm test`) before pushing. Then a follow-up turns nexus-dev into the first host (Caddy `/tweaklet/*` path-route + the bootstrap + the wizard) — tracked separately.
+Build on a **feature branch → PR**. Run the Tweaklet gate (backend `npm run build && npm test` + web `npm run build && npm test`) before pushing. Then a follow-up wires up the first host app's dev server (Caddy `/tweaklet/*` path-route + the bootstrap + the wizard) — tracked separately.

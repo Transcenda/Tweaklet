@@ -12,7 +12,7 @@ import { createRoot } from "react-dom/client";
 // Vite returns the contents of panel.css as a string with the ?inline query.
 import cssText from "./panel.css?inline";
 import { App } from "./App.js";
-import { setBase } from "./api.js";
+import { setBase, lockFetch } from "./api.js";
 
 const ROOT_ID = "tweaklet-root";
 const DOCK_STYLE_ID = "tweaklet-dock-style";
@@ -48,13 +48,36 @@ export function isStandalone(src: string | null | undefined): boolean {
   return new URLSearchParams(src.slice(q + 1)).has("standalone");
 }
 
-/** Locate this script's src: prefer document.currentScript, fall back to scanning. */
-function findScriptSrc(): string {
-  const current = document.currentScript as HTMLScriptElement | null;
-  if (current?.src) return current.src;
-  const scripts = Array.from(document.scripts);
-  const match = scripts.find((s) => /\/widget\.js(\?.*)?$/.test(s.src));
-  return match?.src ?? "";
+/** A same-origin URL whose path ends in /widget.js — the only kind we trust when scanning. */
+function isOwnWidgetUrl(src: string): boolean {
+  try {
+    const u = new URL(src, window.location.href);
+    return u.origin === window.location.origin && u.pathname.endsWith("/widget.js");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Locate this script's src, which becomes the base for every API call. Host
+ * markup can shadow `document.currentScript` / `document.scripts` with named
+ * elements (DOM clobbering, e.g. `<img name="currentScript" src=…>`), which
+ * would point the widget's API calls at another origin. So the built-in getters
+ * are read off `Document.prototype`, only real `<script>` elements count, and
+ * the fallback scan only trusts a same-origin `…/widget.js`. Returns "" (and
+ * warns) when nothing qualifies, so the widget doesn't mount.
+ * Exported for unit testing.
+ */
+export function findScriptSrc(doc: Document = document): string {
+  const currentGetter = Object.getOwnPropertyDescriptor(Document.prototype, "currentScript")?.get;
+  const current: unknown = currentGetter ? currentGetter.call(doc) : null;
+  if (current instanceof HTMLScriptElement && current.src) return current.src;
+  const scripts = Document.prototype.querySelectorAll.call(doc, "script[src]");
+  for (const s of Array.from(scripts)) {
+    if (s instanceof HTMLScriptElement && isOwnWidgetUrl(s.src)) return s.src;
+  }
+  console.warn("[tweaklet] couldn't find a same-origin <script src=\".../widget.js\">; the widget was not mounted.");
+  return "";
 }
 
 /**
@@ -63,6 +86,7 @@ function findScriptSrc(): string {
  * Exported for unit testing (pass a known `src`).
  */
 export function mount(src: string): void {
+  lockFetch();
   if (document.getElementById(ROOT_ID)) return;
   setBase(deriveBase(src));
   const standalone = isStandalone(src);
@@ -93,7 +117,8 @@ export function mount(src: string): void {
   // reserved right column.
   document.documentElement.appendChild(host);
 
-  const shadow = host.attachShadow({ mode: "open" });
+  // Closed: host-page scripts can't reach into the panel (e.g. to click Allow).
+  const shadow = host.attachShadow({ mode: "closed" });
 
   const style = document.createElement("style");
   style.textContent = cssText;

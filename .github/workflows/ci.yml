@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  public-repo-check:
+    name: Public-repo check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: sh scripts/check-public.sh
+
+  test:
+    name: Test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Supported: the current LTS only (package.json "engines"). `latest`
+        # gives early warning for the next line. Aliases track releases.
+        node: ["lts/*", "latest"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          check-latest: true
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+      - run: node --version
+      # Git-level tests make commits in temporary repos.
+      - run: git config --global user.name "CI" && git config --global user.email "ci@example.com" && git config --global init.defaultBranch main
+      - run: npm ci --ignore-scripts
+      - run: npm --prefix web ci
+      - run: npm run typecheck
+      # Build first: the server tests serve the built widget bundle.
+      - run: npm run build:all
+      - run: npm test -- --testTimeout=60000
+      - run: npm --prefix web test

@@ -58,3 +58,25 @@ describe("formatContext", () => {
     expect(formatContext(null, [])).toBe("");
   });
 });
+
+describe("serializeElement redaction", () => {
+  it("drops secret-named and opaque data-* attributes and redacts tokens in values and text", () => {
+    const opaque = "abc123def456ghi789jkl012mno345pqr678";
+    document.body.innerHTML =
+      `<a id="x" data-testid="cta" data-session="${opaque}" data-auth-token="tok" ` +
+      `href="/cb?code=${opaque}">Use ${opaque}</a>`;
+    const el = serializeElement(document.getElementById("x")!);
+    expect(el.attrs["data-testid"]).toBe("cta");
+    expect(el.attrs).not.toHaveProperty("data-session");
+    expect(el.attrs).not.toHaveProperty("data-auth-token");
+    expect(JSON.stringify(el)).not.toContain(opaque);
+    expect(el.text).toContain("[redacted]");
+  });
+
+  it("never captures an input's value", () => {
+    document.body.innerHTML = '<input id="i" name="q" value="secret-typed" placeholder="Search">';
+    const el = serializeElement(document.getElementById("i")!);
+    expect(JSON.stringify(el)).not.toContain("secret-typed");
+    expect(el.attrs.placeholder).toBe("Search");
+  });
+});

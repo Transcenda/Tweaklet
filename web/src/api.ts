@@ -1,4 +1,27 @@
-export interface User { login: string; id: number; }
+export interface User { login: string; id: number; needsReauth?: boolean; }
+
+export interface ChangeBranch { name: string; title: string; owner: string | null; saves: number; updated: string; current: boolean; dirty: boolean; }
+export interface Branches { base: string; current: string; branches: ChangeBranch[]; }
+export interface StartedChange { branch: string; title: string; synced: boolean; }
+
+/** Surface the server's own error message ("the agent is still working…")
+ *  instead of a bare status code. */
+async function failure(path: string, res: Response): Promise<Error> {
+  let detail = "";
+  try { const j = await res.json(); detail = j?.detail ?? j?.error ?? ""; } catch { /* not JSON */ }
+  return new Error(detail || `${path} failed: ${res.status}`);
+}
+
+// The widget lives inside the host page, where any script can replace
+// window.fetch. lockFetch() — called once when the widget boots — keeps the
+// original so later patches (including code hot-reloaded into the page) can't
+// read or alter Tweaklet's own requests. Unit tests that never boot the widget
+// use whatever global fetch they stub.
+let lockedFetch: typeof fetch | null = null;
+export function lockFetch(): void {
+  if (!lockedFetch && typeof globalThis.fetch === "function") lockedFetch = globalThis.fetch.bind(globalThis);
+}
+const tfetch: typeof fetch = (input, init) => (lockedFetch ?? globalThis.fetch)(input, init);
 
 // The base path/origin the widget was loaded from. `embed.ts` derives it from
 // the <script src=".../widget.js"> URL at load and calls setBase() before the
@@ -9,30 +32,33 @@ export function setBase(b: string): void { _base = b; }
 export function getBase(): string { return _base; }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
+  const res = await tfetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`${path} failed: ${res.status}`);
+  if (!res.ok) throw await failure(path, res);
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path, { credentials: "include" });
-  if (!res.ok) throw new Error(`${path} failed: ${res.status}`);
+  const res = await tfetch(path, { credentials: "include" });
+  if (!res.ok) throw await failure(path, res);
   return (await res.json()) as T;
 }
 
 export const api = {
   async me(): Promise<User | null> {
-    const res = await fetch(`${getBase()}/agent/me`, { credentials: "include" });
+    const res = await tfetch(`${getBase()}/agent/me`, { credentials: "include" });
     if (res.status === 401) return null;
     if (!res.ok) throw new Error(`/agent/me failed: ${res.status}`);
     return (await res.json()) as User;
   },
-  startIdea: (idea: string) => post<{ branch: string }>(`${getBase()}/agent/idea`, { idea }),
+  startIdea: (idea: string) => post<StartedChange>(`${getBase()}/agent/idea`, { idea }),
+  branches: () => get<Branches>(`${getBase()}/agent/branches`),
+  switchBranch: (branch: string) => post<{ branch: string }>(`${getBase()}/agent/branches/switch`, { branch }),
+  deleteBranch: (branch: string) => post<void>(`${getBase()}/agent/branches/delete`, { branch }),
   clone: (repoRef: string) => post<{ path: string }>(`${getBase()}/agent/clone`, { repoRef }),
   checkpoint: (message?: string) => post<void>(`${getBase()}/agent/checkpoint`, { message }),
   undo: () => post<void>(`${getBase()}/agent/undo`),
@@ -46,6 +72,8 @@ export const api = {
   restore: (sha: string) => post<void>(`${getBase()}/agent/restore`, { sha }),
   doctor: () => get<{ checks: DoctorCheck[] }>(`${getBase()}/agent/doctor`),
   repos: () => get<{ allowlist: string[]; cloned: boolean }>(`${getBase()}/agent/repos`),
+  /** Anonymous: is someone else using this server right now? */
+  authStatus: () => get<{ inUse: boolean; idleMinutes: number; freeInMinutes?: number }>(`${getBase()}/auth/status`),
   stop: () => post<void>(`${getBase()}/agent/stop`),
   respondPermission: (permissionID: string, response: "approve" | "deny") =>
     post<void>(`${getBase()}/agent/permission`, { permissionID, response }),
@@ -77,7 +105,7 @@ async function setupFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   if ((init as RequestInit & { method?: string }).method === "POST") {
     headers["Content-Type"] = "application/json";
   }
-  const res = await fetch(path, { ...init, headers, credentials: "include" });
+  const res = await tfetch(path, { ...init, headers, credentials: "include" });
   if (res.status === 403) throw new SetupAuthError();
   if (!res.ok) throw new Error(`${path} failed: ${res.status}`);
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
@@ -132,13 +160,14 @@ export const setupApi = {
 export interface EndFrame { type: "end"; code: number; }
 
 export async function streamPrompt(prompt: string, onEvent: (e: any) => void): Promise<EndFrame | null> {
-  const res = await fetch(`${getBase()}/agent/prompt`, {
+  const res = await tfetch(`${getBase()}/agent/prompt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify({ prompt }),
   });
-  if (!res.ok || !res.body) throw new Error(`/agent/prompt failed: ${res.status}`);
+  if (!res.ok) throw await failure("/agent/prompt", res);
+  if (!res.body) throw new Error("/agent/prompt failed: empty response");
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = "";

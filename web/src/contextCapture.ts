@@ -1,3 +1,5 @@
+import { isSecretAttribute, redactText, redactedClone } from "./dom-inspect.js";
+
 export interface PickedElement {
   tag: string;
   id: string;
@@ -16,8 +18,9 @@ export function serializeElement(el: Element): PickedElement {
   const attrs: Record<string, string> = {};
   for (const a of Array.from(el.attributes)) {
     if (a.name === "class" || a.name === "id" || a.name === "style") continue;
+    if (isSecretAttribute(a.name, a.value)) continue;
     if (a.name.startsWith("data-") || a.name.startsWith("aria-") || KEEP_ATTRS.includes(a.name)) {
-      attrs[a.name] = a.value;
+      attrs[a.name] = a.name.startsWith("aria-") ? a.value : redactText(a.value);
     }
   }
   const path: string[] = [];
@@ -29,14 +32,15 @@ export function serializeElement(el: Element): PickedElement {
     path.unshift(seg);
     cur = cur.parentElement;
   }
-  const open = el.outerHTML.match(/^<[^>]*>/);
+  // Opening tag from a redacted shallow clone: no value=, tokens or secret attrs.
+  const open = redactedClone(el.cloneNode(false) as Element).outerHTML.match(/^<[^>]*>/);
   return {
     tag: el.tagName.toLowerCase(),
     id: el.id || "",
     classes: Array.from(el.classList),
     attrs,
     selectorPath: path.join(" > "),
-    text: (el.textContent || "").trim().slice(0, 120),
+    text: redactText((el.textContent || "").trim()).slice(0, 120),
     html: open ? open[0] : "",
   };
 }

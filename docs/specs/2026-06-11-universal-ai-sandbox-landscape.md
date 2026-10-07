@@ -1,5 +1,7 @@
 # Universal AI Sandbox — Competitive & Technology Landscape
 
+> **Status:** Historical (vision) — a June 2026 market snapshot that informed the original "universal AI sandbox" idea; Tweaklet itself narrowed to installing on a team's existing dev server with no containerization or sandbox provider, see 2026-06-11-universal-ai-sandbox-design.md and docs/ARCHITECTURE.md.
+
 > Research compiled 2026-06-11 to inform the brainstorm for a "universal AI sandbox" —
 > a product that (eventually) auto-containerizes any existing/legacy app (app + DB +
 > dependent services + a git clone), runs it as a spinnable isolated environment, bakes
@@ -8,8 +10,6 @@
 >
 > Sourced via web research (multiple agents). Every non-obvious claim carries a source URL.
 > **Pricing and product status are point-in-time (June 2026) — re-verify before quoting.**
-> This is a *standalone product* being incubated; T8A is dogfood app #1. These docs will
-> migrate to the product's own repo once it exists.
 
 ---
 
@@ -268,8 +268,8 @@ the third — most on **A**.
 - Credits/tokens/messages (Pro ≈ $19–$30, scaling $100–$500): app builders + agents.
 - Compute-metered (CPU/RAM/GPU-seconds, per-sandbox-hour): all infra.
 - Enterprise "contact sales" / services-led: all modernization, premium CDEs.
-- **Likely model for this product: hybrid — per-seat (non-technical UX) + per-sandbox-hour
-  (running full-stack compute)** — a warm full-stack sandbox is genuinely expensive.
+- **Implication for this product:** a warm full-stack sandbox is genuinely expensive to run, so
+  where that compute lives (and who pays for it) is a first-order design constraint.
 
 ### Why hasn't this been fully done?
 
@@ -293,8 +293,8 @@ consumer-UX DNA. **A is genuinely hard and genuinely unclaimed.**
 ## Implications for THIS product (as scoped in the brainstorm)
 
 Decisions so far: **non-technical-first**, **assume-it-containerizes for v1** (AI-assisted,
-dev-in-the-loop containerization deferred to Phase 2), **frontend-feature edit scope**, **T8A as
-dogfood app #1**, **PR handoff in v1 (minimal)**.
+dev-in-the-loop containerization deferred to Phase 2), **frontend-feature edit scope**, **one real
+host app as the first proving ground**, **PR handoff in v1 (minimal)**.
 
 1. **The moat is A + B, and we deliberately deferred A.** That's the right *sequencing* (prove
    the value loop cheaply), but it means **v1 must not collapse into "a frontend visual editor"**

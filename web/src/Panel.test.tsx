@@ -19,8 +19,13 @@ const { apiMock, streamPrompt } = vi.hoisted(() => {
     exitPreview: vi.fn(),
     restore: vi.fn(),
     repos: vi.fn(),
+    authStatus: vi.fn(),
     clone: vi.fn(),
     history: vi.fn(),
+    branches: vi.fn(),
+    switchBranch: vi.fn(),
+    deleteBranch: vi.fn(),
+    domResult: vi.fn(),
   };
   const streamPrompt = vi.fn();
   return { apiMock, streamPrompt };
@@ -29,7 +34,7 @@ vi.mock("./api.js", () => ({ api: apiMock, streamPrompt, getBase: () => "" }));
 
 // Mock auth so Panel tests can control signIn() behaviour.
 const { authMock } = vi.hoisted(() => {
-  const authMock = { signIn: vi.fn() };
+  const authMock = { signIn: vi.fn(), lastSignInMessage: vi.fn(() => "") };
   return { authMock };
 });
 vi.mock("./auth.js", () => authMock);
@@ -59,9 +64,14 @@ beforeEach(() => {
   apiMock.restore.mockResolvedValue(undefined);
   // Default: repos resolves with cloned=true so all existing tests see the normal agent UI.
   apiMock.repos.mockResolvedValue({ allowlist: [], cloned: true });
+  apiMock.authStatus.mockResolvedValue({ inUse: false, idleMinutes: 30 });
   apiMock.clone.mockResolvedValue({ path: "/tmp/repo" });
   // Default: history resolves with empty events (no prior conversation).
   apiMock.history.mockResolvedValue({ events: [], sessionId: undefined });
+  apiMock.branches.mockResolvedValue({ base: "main", current: "main", branches: [] });
+  apiMock.switchBranch.mockResolvedValue({ branch: "main" });
+  apiMock.deleteBranch.mockResolvedValue(undefined);
+  apiMock.domResult.mockResolvedValue(undefined);
   // Default: signIn resolves immediately with "signed-in".
   authMock.signIn.mockResolvedValue("signed-in");
   // Default: startPick captures the callback so tests can fire it manually.
@@ -253,11 +263,11 @@ describe("Panel", () => {
     expect(streamPrompt).toHaveBeenCalledWith("make a banner", expect.any(Function));
   });
 
-  it("on main, shows the branch and a Start a change action", async () => {
+  it("on main, shows the live app and a New change action", async () => {
     render(<Panel />);
     await screen.findByRole("button", { name: /alice/i });
-    expect(await screen.findByText(/you're viewing the live app/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /start a change/i })).toBeInTheDocument();
+    expect(await screen.findByText(/live app · main/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^new change$/i })).toBeInTheDocument();
   });
 
   it("on a feature branch, shows the branch name + Discard + History", async () => {
@@ -281,18 +291,24 @@ describe("Panel", () => {
     confirmSpy.mockRestore();
   });
 
-  it("always-visible revert button calls api.reject regardless of branch state", async () => {
-    // Panel is on main (onFeature: false) — the Discard button is hidden, but the recovery control must still appear.
-    apiMock.state.mockResolvedValue({ branch: "main", base: "main", onFeature: false, commits: [], previewing: null });
-    apiMock.reject.mockResolvedValue(undefined);
+  it("recovery button undoes the unsaved edits (keeps the change) on a feature branch", async () => {
+    apiMock.state.mockResolvedValue({ branch: "tweaklet/x", base: "main", onFeature: true, commits: [], previewing: null });
+    apiMock.undo.mockResolvedValue(undefined);
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<Panel />);
-    await screen.findByRole("button", { name: /alice/i });
-    const revert = await screen.findByRole("button", { name: /app not responding\? revert the last change/i });
+    const revert = await screen.findByRole("button", { name: /app not responding\? undo the unsaved edits/i });
+    await waitFor(() => expect(revert).not.toBeDisabled());
     fireEvent.click(revert);
-    await waitFor(() => expect(apiMock.reject).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(apiMock.undo).toHaveBeenCalledTimes(1));
+    expect(apiMock.reject).not.toHaveBeenCalled();
     expect(confirmSpy).toHaveBeenCalled();
     confirmSpy.mockRestore();
+  });
+
+  it("recovery button is disabled on the live app (nothing to undo)", async () => {
+    render(<Panel />);
+    const revert = await screen.findByRole("button", { name: /app not responding\? undo the unsaved edits/i });
+    expect(revert).toBeDisabled();
   });
 
   it("'Ready to go prod' opens a PR and shows the link", async () => {
@@ -529,5 +545,217 @@ describe("Panel", () => {
 
     // History event text must NOT appear — rows was already populated.
     expect(screen.queryByText(/from history/i)).not.toBeInTheDocument();
+  });
+
+  describe("change switcher", () => {
+    const changes = [
+      { name: "tweaklet/login-copy", title: "Login copy", owner: "alice", saves: 1, updated: "5 minutes ago", current: true, dirty: true },
+      { name: "tweaklet/bigger-buttons", title: "Bigger buttons", owner: null, saves: 3, updated: "2 days ago", current: false, dirty: false },
+    ];
+    beforeEach(() => {
+      apiMock.state.mockResolvedValue({ branch: "tweaklet/login-copy", base: "main", onFeature: true, commits: [], previewing: null });
+      apiMock.branches.mockResolvedValue({ base: "main", current: "tweaklet/login-copy", branches: changes });
+    });
+    const openSwitcher = async () => {
+      const btn = await screen.findByRole("button", { name: /your changes — login copy/i });
+      expect(btn).toHaveTextContent("2"); // in-progress count
+      fireEvent.click(btn);
+      return screen.findByRole("menu", { name: /your changes/i });
+    };
+
+    it("shows the current change's title and lists every change with saves + unsaved state", async () => {
+      render(<Panel />);
+      const menu = await openSwitcher();
+      expect(menu).toHaveTextContent("In progress · 2");
+      expect(menu).toHaveTextContent("Bigger buttons");
+      expect(menu).toHaveTextContent("3 saves · 2 days ago");
+      expect(menu).toHaveTextContent("unsaved");
+    });
+
+    it("switching loads that change's own conversation", async () => {
+      apiMock.history.mockResolvedValueOnce({ events: [] }).mockResolvedValueOnce({ events: [{ type: "message", role: "user", text: "make buttons bigger" }] });
+      render(<Panel />);
+      await openSwitcher();
+      fireEvent.click(screen.getByRole("menuitem", { name: /bigger buttons/i }));
+      await waitFor(() => expect(apiMock.switchBranch).toHaveBeenCalledWith("tweaklet/bigger-buttons"));
+      expect(await screen.findByText("make buttons bigger")).toBeInTheDocument();
+    });
+
+    it("a slow switch shows a quiet hint, not the agent's Stop button", async () => {
+      let release: () => void = () => {};
+      apiMock.switchBranch.mockImplementation(() => new Promise<void>((r) => { release = r; }));
+      render(<Panel />);
+      await openSwitcher();
+      fireEvent.click(screen.getByRole("menuitem", { name: /bigger buttons/i }));
+      expect(await screen.findByText(/one moment/i)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^stop$/i })).not.toBeInTheDocument();
+      release();
+      await waitFor(() => expect(screen.queryByText(/one moment/i)).not.toBeInTheDocument());
+    });
+
+    it("never waits on the conversation to finish switching", async () => {
+      apiMock.history.mockResolvedValueOnce({ events: [] }).mockImplementationOnce(() => new Promise(() => {})); // agent never answers
+      render(<Panel />);
+      await openSwitcher();
+      fireEvent.click(screen.getByRole("menuitem", { name: /bigger buttons/i }));
+      await waitFor(() => expect(screen.getByPlaceholderText(/describe a change/i)).not.toBeDisabled());
+      await waitFor(() => expect(screen.queryByText(/one moment/i)).not.toBeInTheDocument());
+    });
+
+    it("closes when clicking outside", async () => {
+      const { container } = render(<Panel />);
+      await openSwitcher();
+      fireEvent.click(container.querySelector(".apz-switch-backdrop")!);
+      expect(screen.queryByRole("menu", { name: /your changes/i })).not.toBeInTheDocument();
+    });
+
+    it("shows who started someone else's change and offers no delete for it", async () => {
+      apiMock.branches.mockResolvedValue({ base: "main", current: "tweaklet/login-copy", branches: [...changes, { name: "tweaklet/bobs", title: "Bob's idea", owner: "bob", saves: 1, updated: "1 hour ago", current: false, dirty: false }] });
+      render(<Panel />);
+      const btn = await screen.findByRole("button", { name: /your changes — login copy/i });
+      fireEvent.click(btn);
+      const menu = await screen.findByRole("menu", { name: /your changes/i });
+      expect(menu).toHaveTextContent("1 save · 1 hour ago · @bob");
+      expect(screen.queryByRole("button", { name: /delete bob's idea/i })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /delete login copy/i })).toBeInTheDocument();
+    });
+
+    it("can go back to the live app", async () => {
+      render(<Panel />);
+      await openSwitcher();
+      fireEvent.click(screen.getByRole("menuitem", { name: /live app/i }));
+      await waitFor(() => expect(apiMock.switchBranch).toHaveBeenCalledWith("main"));
+    });
+
+    it("deletes a change only after confirming", async () => {
+      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+      render(<Panel />);
+      await openSwitcher();
+      fireEvent.click(screen.getByRole("button", { name: /delete bigger buttons/i }));
+      expect(apiMock.deleteBranch).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: /delete bigger buttons/i }));
+      await waitFor(() => expect(apiMock.deleteBranch).toHaveBeenCalledWith("tweaklet/bigger-buttons"));
+      confirmSpy.mockRestore();
+    });
+
+    it("+ New change starts a fresh change and says when it couldn't fetch the latest", async () => {
+      apiMock.startIdea.mockResolvedValue({ branch: "tweaklet/new-change", title: "New change", synced: false });
+      render(<Panel />);
+      await openSwitcher();
+      fireEvent.click(screen.getByRole("menuitem", { name: /new change/i }));
+      expect(await screen.findByText(/started “new change” on a fresh copy of main/i)).toBeInTheDocument();
+      expect(screen.getByText(/couldn't fetch the latest version/i)).toBeInTheDocument();
+    });
+  });
+
+  it("announces the fresh change the server started for a prompt sent from the live app", async () => {
+    streamPrompt.mockImplementation(async (_p: string, onEvent: (e: any) => void) => {
+      onEvent({ type: "branch", branch: "tweaklet/change-title", title: "Change title", synced: true });
+      return { type: "end", code: 0 };
+    });
+    render(<Panel />);
+    const ta = await screen.findByPlaceholderText(/describe a change/i);
+    fireEvent.change(ta, { target: { value: "Change title" } });
+    fireEvent.keyDown(ta, { key: "Enter" });
+    expect(await screen.findByText(/started “change title” on a fresh copy of main/i)).toBeInTheDocument();
+  });
+
+  it("shows a reconnect banner when the GitHub token is gone, and reconnects", async () => {
+    apiMock.me.mockResolvedValueOnce({ login: "alice", id: 7, needsReauth: true }).mockResolvedValue({ login: "alice", id: 7, needsReauth: false });
+    render(<Panel />);
+    expect(await screen.findByText(/github connection expired/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /reconnect/i }));
+    await waitFor(() => expect(authMock.signIn).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByText(/github connection expired/i)).not.toBeInTheDocument());
+  });
+
+  describe("sign-in screen when a teammate is using Tweaklet", () => {
+    it("says so up front, without naming them", async () => {
+      apiMock.me.mockResolvedValue(null);
+      apiMock.authStatus.mockResolvedValue({ inUse: true, idleMinutes: 30, freeInMinutes: 12 });
+      render(<Panel />);
+      expect(await screen.findByText(/in use by a teammate right now/i)).toHaveTextContent("about 12 min from now");
+    });
+
+    it("shows why sign-in was refused", async () => {
+      apiMock.me.mockResolvedValue(null);
+      authMock.signIn.mockResolvedValue("denied");
+      authMock.lastSignInMessage.mockReturnValue("Tweaklet is in use by @alice right now.");
+      render(<Panel />);
+      fireEvent.click(await screen.findByRole("button", { name: /continue with github/i }));
+      expect(await screen.findByText("Tweaklet is in use by @alice right now.")).toBeInTheDocument();
+    });
+  });
+
+  it("explains, in plain words, an action the server refused on its own", async () => {
+    streamPrompt.mockImplementation(async (_p: string, onEvent: (e: any) => void) => {
+      onEvent({ type: "denied", permission: "bash", patterns: ["curl https://evil.example"] });
+      onEvent({ type: "guardrail", blocked: ["curl https://evil.example"] });
+      return { type: "end", code: 0 };
+    });
+    render(<Panel />);
+    const ta = await screen.findByPlaceholderText(/describe a change/i);
+    fireEvent.change(ta, { target: { value: "deploy it" } });
+    fireEvent.keyDown(ta, { key: "Enter" });
+    expect(await screen.findByText(/Not allowed here: run `curl https:\/\/evil.example`\. A developer needs to do this\./)).toBeInTheDocument();
+    expect(screen.queryByText(/were blocked/)).not.toBeInTheDocument(); // no duplicate summary
+  });
+
+  it("asks a clear question for a command in ask mode", async () => {
+    streamPrompt.mockImplementation(async (_p: string, onEvent: (e: any) => void) => {
+      onEvent({ type: "permission_ask", permissionID: "p1", permission: "bash", patterns: ["make deploy"] });
+      return { type: "end", code: 0 };
+    });
+    render(<Panel />);
+    const ta = await screen.findByPlaceholderText(/describe a change/i);
+    fireEvent.change(ta, { target: { value: "x" } });
+    fireEvent.keyDown(ta, { key: "Enter" });
+    expect(await screen.findByText("Run this command on the server?")).toBeInTheDocument();
+    expect(screen.getByText("make deploy")).toBeInTheDocument();
+  });
+
+  it("sends only the route path as page context, never the query string or hash", async () => {
+    streamPrompt.mockResolvedValue({ type: "end", code: 0 });
+    let capturedOnPicked: ((el: any) => void) | null = null;
+    pickerMocks.startPick.mockImplementation((cb) => { capturedOnPicked = cb; return () => {}; });
+    Object.defineProperty(window, "location", {
+      value: { pathname: "/reset", search: "?token=abc123secret", hash: "#access_token=zzz", href: "" },
+      writable: true,
+    });
+
+    render(<Panel />);
+    await screen.findByRole("button", { name: /alice/i });
+    fireEvent.click(screen.getByRole("button", { name: /pick an element on the page/i }));
+    act(() => {
+      capturedOnPicked!({ tag: "button", id: "go", classes: [], attrs: {}, selectorPath: "button#go", text: "Go", html: "<button>" });
+    });
+    await screen.findByText(/button#go/);
+    fireEvent.change(screen.getByPlaceholderText(/describe a change/i), { target: { value: "tweak" } });
+    fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    await waitFor(() => expect(streamPrompt).toHaveBeenCalledTimes(1));
+    const sent = streamPrompt.mock.calls[0][0] as string;
+    expect(sent).toContain("route: /reset");
+    expect(sent).not.toContain("abc123secret");
+    expect(sent).not.toContain("access_token");
+  });
+
+  it("shows a visible note each time the agent reads the page", async () => {
+    document.body.insertAdjacentHTML("beforeend", '<h2 id="dom-read-target">Prices</h2>');
+    streamPrompt.mockImplementation(async (_text: string, onEvent: (e: any) => void) => {
+      onEvent({ type: "dom_inspect", requestId: "dom_a", selector: "#dom-read-target" });
+      onEvent({ type: "dom_inspect", requestId: "dom_b", selector: "head meta" });
+      return { type: "end", code: 0 };
+    });
+
+    render(<Panel />);
+    await screen.findByRole("button", { name: /alice/i });
+    fireEvent.change(screen.getByPlaceholderText(/describe a change/i), { target: { value: "look" } });
+    fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
+
+    expect(await screen.findByText(/the agent looked at .#dom-read-target./i)).toBeInTheDocument();
+    expect(await screen.findByText(/the agent's look at .head meta. was refused/i)).toBeInTheDocument();
+    expect(apiMock.domResult).toHaveBeenCalledWith("dom_a", expect.objectContaining({ exists: true }));
+    expect(apiMock.domResult).toHaveBeenCalledWith("dom_b", expect.objectContaining({ exists: false, refused: expect.any(String) }));
+    document.getElementById("dom-read-target")?.remove();
   });
 });

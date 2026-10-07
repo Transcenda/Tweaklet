@@ -1,7 +1,8 @@
 # Tweaklet Page-Context Capture — Design
 
+> **Status:** Partly superseded — the element picker, metadata-only serializer (`web/src/contextCapture.ts`) and prompt-prepended context block still hold, but the iframe + `postMessage` bridge was replaced by an in-page Shadow-DOM widget that picks host elements directly, and several elements can now be attached; see docs/specs/2026-06-17-pluggable-onboarding-design.md §1.
+
 **Date:** 2026-06-16
-**Status:** Approved (design) — pending spec review before implementation
 **Goal:** Give the Tweaklet agent the context of the page the user is looking at. The user picks an element on the running app (devtools-style click-to-inspect); Tweaklet captures that element plus its HTML hierarchy (tags, ids, CSS classes, attributes) and the current route, and attaches it to the agent prompt — so the agent can locate the right spot in the source by class / selector / attribute.
 
 ## Decisions (locked)
@@ -12,10 +13,12 @@
 | Automatic context | **Page route + title** included on every request, with or without a picked element |
 | Attachment | **One element at a time**, shown as a **removable chip**, **sticky** until removed or replaced |
 | Payload | DOM **metadata only** (tag/id/classes/attrs/selector-path/short text/opening-tag HTML) — no page data or secrets |
-| Bridge | `postMessage` both ways between the host snippet and the panel iframe, origin/type-validated |
+| Bridge | `postMessage` both ways between the host snippet and the panel iframe, origin/type-validated *(superseded: no iframe, no bridge)* |
 | Screenshot | **Out of scope** for v1 |
 
 ## Architecture
+
+*(Superseded: the panel now runs in the host page inside a Shadow root, so capture needs no cross-frame messaging.)*
 
 `snippet.js` runs in the **host page** (can read the host DOM); the panel is a **separate-origin iframe** (`TWEAKLET_ORIGIN`, e.g. `http://localhost:4319`) embedded in the host. Capture happens in the snippet; results cross to the panel via `postMessage`; the panel attaches them to the prompt sent through the existing `streamPrompt → POST /api/agent/prompt → opencode parts[].text` path.
 
@@ -29,7 +32,7 @@ Panel  ◀─postMessage{type:"tweaklet:element", el}───  snippet
 
 ## Components
 
-### 1. Snippet (host context) — `tweaklet/src/server/server.ts` `/snippet.js`
+### 1. Snippet (host context) — `src/server/server.ts` `/snippet.js`
 - **Picker mode:** on `tweaklet:pick-start`, attach `mousemove` (draw/move a highlight `<div>` overlay over the element under the cursor), `click` (capture: `serializeElement(target)`, then exit), and `keydown` Esc (cancel). The overlay is a fixed-position, pointer-events:none box; capture uses `document.elementFromPoint` excluding the overlay + launcher.
 - **`serializeElement(el)`** (pure, testable) → returns:
   ```ts
@@ -44,13 +47,13 @@ Panel  ◀─postMessage{type:"tweaklet:element", el}───  snippet
 - **Page context:** on the panel's request (or with each captured element), also send `{ route: location.pathname, title: document.title }`.
 - Sends results: `iframe.contentWindow.postMessage({ type: "tweaklet:element", element, page }, TWEAKLET_ORIGIN)`.
 
-### 2. Panel (iframe) — `tweaklet/web/src/Panel.tsx`
+### 2. Panel (iframe) — `web/src/Panel.tsx`
 - Listens for `message` events; **accepts only `event.source === window.parent` and `type` starting `tweaklet:`**.
 - A **"📍 Pick element"** control in the composer area → `window.parent.postMessage({ type: "tweaklet:pick-start" }, "*")` (target `*` is acceptable for a "start picking" signal that carries no data; the host snippet checks the type).
 - State `pickedContext: { element, page } | null`. On `tweaklet:element`, set it. Render a **chip**: `📍 button.cta-primary · /checkout  ✕` (✕ clears it). Picking again replaces it.
 - A small `formatContext(pickedContext, page)` builds the block prepended to the prompt on send.
 
-### 3. Prompt integration — `tweaklet/web/src/api.ts` + `Panel.tsx`
+### 3. Prompt integration — `web/src/api.ts` + `Panel.tsx`
 - `send()` composes: `formatContext(...) + "\n\n" + userText` and passes the combined string to `streamPrompt`. Page context (route+title) is included whenever known; the element block is added when one is picked. Example prepended block:
   ```
   [Page] route: /checkout · title: "Checkout"
@@ -71,7 +74,7 @@ Panel  ◀─postMessage{type:"tweaklet:element", el}───  snippet
 - **`serializeElement` unit tests** (jsdom): build a DOM (nested `main > section.x > button#b.cta[data-testid=go]`), serialize the button, assert `tag/id/classes/attrs/selectorPath/text/html`. Edge cases: no id, many classes, no capturable attrs.
 - **`formatContext` unit test:** given a picked element + page, asserts the prepended block text; given only page, asserts page-only block.
 - **Panel tests:** a `tweaklet:element` message from a stubbed `window.parent` renders the chip; ✕ clears it; sending calls `streamPrompt` with the context block prepended; a message from a non-parent source is ignored.
-- Picker overlay (hover highlight, click capture, Esc) verified manually via Playwright against the live `:5173` host.
+- Picker overlay (hover highlight, click capture, Esc) verified manually via Playwright against a locally running host app.
 
 ## Out of scope (YAGNI)
 - Text-selection capture (picker only for v1).

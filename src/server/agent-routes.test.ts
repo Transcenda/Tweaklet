@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import request from "supertest";
-import { createServer } from "./server.js";
+import { createServer, issueSessionToken } from "./server.js";
 import { sign } from "../auth/signing.js";
 import type { TweakletConfig } from "../config/config.js";
 import { makeSessionStore } from "./session-store.js";
@@ -15,9 +15,9 @@ const base: TweakletConfig = {
   guardrails: { allow: ["frontend/src/**"] },
   setup: { completed: false },
 };
-const authCookie = `apz_session=${sign({ login: "alice", id: 7 }, base.server.sessionSecret)}`;
+const authCookie = `apz_session=${issueSessionToken({ login: "alice", id: 7 }, base.server.sessionSecret)}`;
 // A second authenticated user (bob) — used to test cross-user IDOR prevention.
-const bobCookie = `apz_session=${sign({ login: "bob", id: 8 }, base.server.sessionSecret)}`;
+const bobCookie = `apz_session=${issueSessionToken({ login: "bob", id: 8 }, base.server.sessionSecret)}`;
 
 // A runPrompt double that just emits an end-ish event and returns a session id.
 const fakeRunPrompt = async (a: any) => {
@@ -29,7 +29,7 @@ const fakeGetClient = async () => ({});
 function appWith(deps: Record<string, unknown> = {}, config: TweakletConfig = base) {
   return createServer(config, {
     exchangeCodeForToken: async () => "tok",
-    fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
+    checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "alice@example.com" }),
     runPrompt: fakeRunPrompt,
     getClient: fakeGetClient,
     sessionStore: noopStore(),
@@ -74,7 +74,22 @@ describe("POST /tweaklet/agent/prompt", () => {
     expect(captured.allow).toEqual(["frontend/src/**"]);
     expect(captured.onEvent).toBeTypeOf("function");
     expect(captured.onAsk).toBeTypeOf("function");
-    expect(captured.mode).toBeUndefined(); // mode was removed when Explore/Build fused
+    expect(captured.mode).toBe("auto"); // approvals mode (Explore/Build modes were fused long ago); OAuth configured → server decides
+  });
+
+  it("lets the server decide risky actions (auto) when GitHub sign-in is configured, and asks the person otherwise", async () => {
+    let captured: any = null;
+    const spy = async (a: any) => { captured = a; return { sessionId: "s1", blocked: [] }; };
+    const local: TweakletConfig = { ...base, github: undefined }; // no GitHub OAuth → a developer's own machine
+    await request(appWith({ runPrompt: spy }, local)).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "hi" }).expect(200);
+    expect(captured.mode).toBe("ask");
+    const shared = base; // GitHub OAuth configured → a shared server
+    await request(appWith({ runPrompt: spy }, shared)).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "hi" }).expect(200);
+    expect(captured.mode).toBe("auto");
+    expect(captured.safeCommands).toContain("npm run typecheck");
+    const optedIn: TweakletConfig = { ...shared, agent: { ...base.agent!, approvals: "ask", safeCommands: ["make check"] } };
+    await request(appWith({ runPrompt: spy }, optedIn)).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "hi" }).expect(200);
+    expect(captured).toMatchObject({ mode: "ask", safeCommands: ["make check"] });
   });
 
   it("emits a guardrail frame when runPrompt reports blocked paths", async () => {
@@ -137,6 +152,16 @@ describe("GET /tweaklet/agent/history", () => {
   });
 });
 
+describe("GET /tweaklet/agent/history timeout", () => {
+  it("answers with no events instead of hanging when opencode never comes up", async () => {
+    const store = noopStore(); store.set("alice", "s1");
+    const res = await request(appWith({ getClient: () => new Promise(() => {}), sessionStore: store, historyTimeoutMs: 50 }))
+      .get("/tweaklet/agent/history").set("Cookie", authCookie).expect(200);
+    expect(res.body.events).toEqual([]);
+    expect(res.body.error).toMatch(/timed out/);
+  });
+});
+
 describe("POST /tweaklet/agent/permission", () => {
   it("emits a permission_ask SSE frame, then resolves the pending ask on approve (202)", async () => {
     // runPrompt that calls onAsk and waits for the resolution before finishing.
@@ -166,7 +191,7 @@ describe("POST /tweaklet/agent/permission", () => {
     await request(appWith()).post("/tweaklet/agent/permission").send({ permissionID: "x", response: "approve" }).expect(401);
   });
 
-  it("404s (IDOR guard) when a different user tries to resolve another user's pending ask", async () => {
+  it("refuses a different user resolving another user's pending ask", async () => {
     // alice owns the ask; bob must NOT be able to resolve it.
     let askResult: "approve" | "deny" | null = null;
     const spy = async (a: any) => {
@@ -177,9 +202,10 @@ describe("POST /tweaklet/agent/permission", () => {
     // alice fires a prompt — the ask is registered with owner = "alice".
     const promptDone = request(app).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "hi" }).then((r) => r);
     await new Promise((r) => setTimeout(r, 50));
-    // bob attempts to resolve alice's ask → must get 404, not 202.
-    await request(app).post("/tweaklet/agent/permission").set("Cookie", bobCookie).send({ permissionID: "per_idor", response: "approve" }).expect(404);
-    // The ask must still be pending (askResult still null after bob's 404).
+    // bob attempts to resolve alice's ask → refused: alice holds the server, so
+    // bob isn't even signed in (and the per-ask owner check backs this up).
+    await request(app).post("/tweaklet/agent/permission").set("Cookie", bobCookie).send({ permissionID: "per_idor", response: "approve" }).expect(401);
+    // The ask must still be pending.
     expect(askResult).toBeNull();
     // alice resolves her own ask → 202.
     await request(app).post("/tweaklet/agent/permission").set("Cookie", authCookie).send({ permissionID: "per_idor", response: "approve" }).expect(202);
@@ -197,12 +223,17 @@ describe("POST /tweaklet/agent/dom-result", () => {
       .expect(404, { ok: false });
   });
 
-  it("400s when requestId or result is missing/malformed", async () => {
-    await request(appWith())
-      .post("/tweaklet/agent/dom-result")
-      .set("Cookie", authCookie)
-      .send({ requestId: "dom_1" })
-      .expect(400);
+  it("during the person's own run: 400s on a malformed body and 413s on an oversized snapshot", async () => {
+    let release: () => void = () => {};
+    const runPrompt = async () => { await new Promise<void>((r) => { release = r; }); return { sessionId: "s1", blocked: [] }; };
+    const app = appWith({ runPrompt });
+    const run = request(app).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "x" }).then((r) => r);
+    await new Promise((r) => setTimeout(r, 50));
+    await request(app).post("/tweaklet/agent/dom-result").set("Cookie", authCookie).send({ requestId: "dom_1" }).expect(400);
+    await request(app).post("/tweaklet/agent/dom-result").set("Cookie", authCookie)
+      .send({ requestId: "x", result: { outerHTML: "a".repeat(40_000) } }).expect(413);
+    release();
+    await run;
   });
 
   it("401s without a session", async () => {
@@ -238,7 +269,7 @@ describe("POST /tweaklet/agent/stop", () => {
 
 const configWithRepoAllowlist: TweakletConfig = {
   ...base,
-  repo: { path: "", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: ["transcenda/t8a"], sourceDir: "/tmp/repos" },
+  repo: { path: "", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: ["acme/webapp"], sourceDir: "/tmp/repos" },
   setup: { completed: false },
 };
 
@@ -266,7 +297,7 @@ describe("GET /tweaklet/agent/repos", () => {
   it("returns allowlist and cloned status (authed)", async () => {
     const app = createServer(configWithRepoAllowlist, {
       exchangeCodeForToken: async () => "gho_tok",
-      fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
+      checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
       sessionStore: noopStore(),
     });
     const session = await signInAlice(app);
@@ -274,7 +305,7 @@ describe("GET /tweaklet/agent/repos", () => {
       .get("/tweaklet/agent/repos")
       .set("Cookie", session)
       .expect(200);
-    expect(res.body.allowlist).toEqual(["transcenda/t8a"]);
+    expect(res.body.allowlist).toEqual(["acme/webapp"]);
     expect(typeof res.body.cloned).toBe("boolean");
   });
 
@@ -288,10 +319,10 @@ describe("POST /tweaklet/agent/clone", () => {
     let cloned: { repoRef: string; token: string } | null = null;
     const app = createServer(configWithRepoAllowlist, {
       exchangeCodeForToken: async () => "gho_tok",
-      fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
+      checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
       cloneRepo: async (repoRef: string, opts: any) => {
         cloned = { repoRef, token: opts.token };
-        return "/tmp/src/t8a";
+        return "/tmp/src/webapp";
       },
       saveConfig: () => {},
       sessionStore: noopStore(),
@@ -300,39 +331,40 @@ describe("POST /tweaklet/agent/clone", () => {
     const res = await request(app)
       .post("/tweaklet/agent/clone")
       .set("Cookie", session)
-      .send({ repoRef: "transcenda/t8a" })
+      .send({ repoRef: "acme/webapp" })
       .expect(200);
-    expect(cloned!.repoRef).toBe("transcenda/t8a");
+    expect(cloned!.repoRef).toBe("acme/webapp");
     expect(cloned!.token).toBe("gho_tok");
-    expect(res.body.path).toBe("/tmp/src/t8a");
+    expect(res.body.path).toBe("/tmp/src/webapp");
   });
 
   it("returns 400 when no repo is configured", async () => {
-    const noRepo = { ...base, repo: undefined };
+    // An explicit access list lets alice sign in even though no repo is configured.
+    const noRepo = { ...base, repo: undefined, access: { allowedLogins: ["alice"] } };
     const app = createServer(noRepo, {
       exchangeCodeForToken: async () => "gho_tok",
-      fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
+      checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
       saveConfig: () => {},
       sessionStore: noopStore(),
     });
     const session = await signInAlice(app);
-    await request(app).post("/tweaklet/agent/clone").set("Cookie", session).send({ repoRef: "transcenda/t8a" }).expect(400);
+    await request(app).post("/tweaklet/agent/clone").set("Cookie", session).send({ repoRef: "acme/webapp" }).expect(400);
   });
 
   it("returns 401 without a session", async () => {
-    await request(appWith()).post("/tweaklet/agent/clone").send({ repoRef: "transcenda/t8a" }).expect(401);
+    await request(appWith()).post("/tweaklet/agent/clone").send({ repoRef: "acme/webapp" }).expect(401);
   });
 
   it("triggers ensurePreview when preview is configured", async () => {
-    const previewConfig = { serviceName: "t8a-frontend-dev", subdir: "frontend", installCheckDir: "frontend/node_modules" };
+    const previewConfig = { serviceName: "webapp-dev", subdir: "frontend", installCheckDir: "frontend/node_modules" };
     const configWithPreview: TweakletConfig = {
       ...configWithRepoAllowlist,
       preview: previewConfig,
     };
-    const ensurePreviewSpy = vi.fn(async () => ({ started: true }));
+    const ensurePreviewSpy = vi.fn(async () => ({ started: true, installed: false, restarted: true }));
     const app = createServer(configWithPreview, {
       exchangeCodeForToken: async () => "gho_tok",
-      fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
+      checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
       cloneRepo: async () => "/repo",
       saveConfig: () => {},
       ensurePreview: ensurePreviewSpy,
@@ -342,7 +374,7 @@ describe("POST /tweaklet/agent/clone", () => {
     const res = await request(app)
       .post("/tweaklet/agent/clone")
       .set("Cookie", session)
-      .send({ repoRef: "transcenda/t8a" })
+      .send({ repoRef: "acme/webapp" })
       .expect(200);
     expect(res.body.path).toBe("/repo");
     expect(ensurePreviewSpy).toHaveBeenCalledOnce();
@@ -350,7 +382,7 @@ describe("POST /tweaklet/agent/clone", () => {
   });
 
   it("clone still succeeds (200) when ensurePreview throws", async () => {
-    const previewConfig = { serviceName: "t8a-frontend-dev", subdir: "frontend", installCheckDir: "frontend/node_modules" };
+    const previewConfig = { serviceName: "webapp-dev", subdir: "frontend", installCheckDir: "frontend/node_modules" };
     const configWithPreview: TweakletConfig = {
       ...configWithRepoAllowlist,
       preview: previewConfig,
@@ -358,7 +390,7 @@ describe("POST /tweaklet/agent/clone", () => {
     const ensurePreviewSpy = vi.fn(async () => { throw new Error("systemctl failed"); });
     const app = createServer(configWithPreview, {
       exchangeCodeForToken: async () => "gho_tok",
-      fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
+      checkRepoAccess: async () => true, fetchGithubUser: async () => ({ login: "alice", id: 7, name: "Alice", email: "a@x.com" }),
       cloneRepo: async () => "/repo",
       saveConfig: () => {},
       ensurePreview: ensurePreviewSpy,
@@ -368,9 +400,68 @@ describe("POST /tweaklet/agent/clone", () => {
     const res = await request(app)
       .post("/tweaklet/agent/clone")
       .set("Cookie", session)
-      .send({ repoRef: "transcenda/t8a" })
+      .send({ repoRef: "acme/webapp" })
       .expect(200);
     expect(res.body.path).toBe("/repo");
     expect(ensurePreviewSpy).toHaveBeenCalledOnce();
+  });
+});
+
+describe("POST /tweaklet/agent/prompt on the base branch", () => {
+  const withRepo: TweakletConfig = { ...base, repo: { path: "/repo", baseBranch: "main", branchPrefix: "tweaklet/", prTarget: "main", allowlist: [] } };
+  function lifecycleOn(branch: { name: string }, started: any[]) {
+    return {
+      currentBranch: async () => branch.name,
+      startBranch: async (_cwd: string, o: any) => { started.push(o); branch.name = "tweaklet/new"; return { branch: "tweaklet/new", title: o.idea, synced: true }; },
+    } as any;
+  }
+
+  it("auto-starts a fresh change titled from the user's text before the agent runs", async () => {
+    const branch = { name: "main" }; const started: any[] = [];
+    let ranOn = "";
+    const runPrompt = async (a: any) => { ranOn = branch.name; return { sessionId: "s1", blocked: [] }; };
+    const res = await request(appWith({ runPrompt, lifecycle: lifecycleOn(branch, started) }, withRepo))
+      .post("/tweaklet/agent/prompt").set("Cookie", authCookie)
+      .send({ prompt: "Picked element: p.title\n\nChange the title to login" }).expect(200);
+    expect(started).toHaveLength(1);
+    expect(started[0]).toMatchObject({ base: "main", prefix: "tweaklet/", idea: "Change the title to login" });
+    expect(ranOn).toBe("tweaklet/new");
+    expect(res.text).toContain('"type":"branch"');
+    expect(res.text).toContain('"branch":"tweaklet/new"');
+  });
+
+  it("does not start a new change when already on one", async () => {
+    const branch = { name: "tweaklet/existing" }; const started: any[] = [];
+    await request(appWith({ lifecycle: lifecycleOn(branch, started) }, withRepo))
+      .post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "more" }).expect(200);
+    expect(started).toHaveLength(0);
+  });
+
+  it("keeps a separate conversation per change", async () => {
+    const branch = { name: "tweaklet/a" }; const seen: (string | undefined)[] = [];
+    let n = 0;
+    const runPrompt = async (a: any) => { seen.push(a.sessionId); return { sessionId: `sess-${++n}`, blocked: [] }; };
+    const app = appWith({ runPrompt, lifecycle: lifecycleOn(branch, []) }, withRepo);
+    await request(app).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "on a" }).expect(200);
+    branch.name = "tweaklet/b";
+    await request(app).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "on b" }).expect(200);
+    branch.name = "tweaklet/a";
+    await request(app).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "back on a" }).expect(200);
+    expect(seen).toEqual([undefined, undefined, "sess-1"]);
+  });
+
+  it("refuses a prompt while previewing an earlier save (edits there would be lost)", async () => {
+    const lifecycle = {
+      currentBranch: async () => "tweaklet/a",
+      isDirty: async () => false,
+      branchState: async () => ({ branch: "tweaklet/a", base: "main", onFeature: true, commits: [] }),
+      previewCommit: async () => {},
+    } as any;
+    let ran = false;
+    const app = appWith({ lifecycle, runPrompt: async () => { ran = true; return { sessionId: "s", blocked: [] }; } }, withRepo);
+    await request(app).post("/tweaklet/agent/preview").set("Cookie", authCookie).send({ sha: "a".repeat(40) }).expect(204);
+    const res = await request(app).post("/tweaklet/agent/prompt").set("Cookie", authCookie).send({ prompt: "x" }).expect(409);
+    expect(res.body.error).toMatch(/previewing/);
+    expect(ran).toBe(false);
   });
 });
