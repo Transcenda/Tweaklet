@@ -17,7 +17,7 @@ jobs:
     name: Public-repo check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - run: sh scripts/check-public.sh
@@ -32,7 +32,7 @@ jobs:
         # gives early warning for the next line. Aliases track releases.
         node: ["lts/*", "latest"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-node@v4
