@@ -54,7 +54,7 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
-    "@types/node": "^24.19.0",
+    "@types/node": "^26.6.6",
     "@types/supertest": "^7.2.1",
     "supertest": "^7.3.1",
     "tsx": "^4.23.15",
